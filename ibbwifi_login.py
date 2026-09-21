@@ -7,16 +7,17 @@ Handles the multi-step ASP.NET Core anti-forgery verification handshake.
 import os
 import re
 import sys
+import time
 import argparse
+import subprocess
 from pathlib import Path
 import requests
 
-# Base URLs
-PORTAL_URL = "https://viracaptive.ibbwifi.istanbul"
+PORTAL_BASE = "https://viracaptive.ibbwifi.istanbul"
 CONNECTIVITY_CHECK_URL = "http://connectivitycheck.gstatic.com/generate_204"
 
 def load_env(env_path: Path):
-    """Simple parser for .env files without requiring third-party libraries."""
+    """Simple parser for .env files without external dependencies."""
     if not env_path.exists():
         return
     with open(env_path, "r", encoding="utf-8") as f:
@@ -33,10 +34,47 @@ def load_env(env_path: Path):
 def is_already_connected() -> bool:
     """Check if internet access is already available."""
     try:
-        res = requests.get(CONNECTIVITY_CHECK_URL, timeout=3)
+        res = requests.get(CONNECTIVITY_CHECK_URL, timeout=3, allow_redirects=False)
         return res.status_code == 204
     except Exception:
         return False
+
+def get_wifi_mac() -> str | None:
+    """Attempt to get active Wi-Fi MAC address."""
+    try:
+        out = subprocess.check_output(
+            "WIFI_DEV=$(nmcli -t -f DEVICE,TYPE device 2>/dev/null | awk -F: '$2==\"wifi\"{print $1; exit}'); cat /sys/class/net/$WIFI_DEV/address 2>/dev/null",
+            shell=True, text=True
+        ).strip()
+        if out and len(out.split(":")) == 6:
+            return out.lower()
+    except Exception:
+        pass
+    return None
+
+def detect_portal_url(session: requests.Session) -> str:
+    """
+    Detect the full captive portal URL with session tokens, location, and MAC
+    by capturing the network gateway redirect.
+    """
+    detect_urls = [
+        "http://connectivitycheck.gstatic.com/generate_204",
+        "http://detectportal.firefox.com/canonical.html",
+        "http://clients3.google.com/generate_204"
+    ]
+    for url in detect_urls:
+        try:
+            res = session.get(url, timeout=5, allow_redirects=True)
+            if "ibbwifi" in res.url or "viracaptive" in res.url:
+                return res.url
+        except Exception:
+            continue
+
+    # Fallback to appending current Wi-Fi MAC
+    mac = get_wifi_mac()
+    if mac:
+        return f"{PORTAL_BASE}/?mac={mac}"
+    return f"{PORTAL_BASE}/"
 
 def extract_token(html_text: str) -> str | None:
     """Extract __RequestVerificationToken from ASP.NET HTML."""
@@ -51,24 +89,27 @@ def login(phone: str, password: str, country_code: str = "90", flag_code: str = 
     session = requests.Session()
     session.headers.update({
         "User-Agent": "Mozilla/5.0 (X11; Linux x86_64; rv:156.0) Gecko/20100101 Firefox/156.0",
-        "Origin": PORTAL_URL,
+        "Origin": PORTAL_BASE,
         "Accept": "*/*"
     })
 
-    print("[*] [Step 1/3] Accessing portal landing page...")
+    print("[*] Detecting portal session URL...")
+    portal_landing_url = detect_portal_url(session)
+    print(f"[*] Target portal URL: {portal_landing_url}")
+
+    print("[*] [Step 1/3] Fetching portal session cookies and CSRF token...")
     try:
-        landing_res = session.get(PORTAL_URL, timeout=10)
+        landing_res = session.get(portal_landing_url, timeout=10)
     except requests.RequestException as e:
         print(f"[-] Failed to reach portal: {e}")
         return False
 
     token1 = extract_token(landing_res.text)
     if not token1:
-        print("[-] Could not extract initial CSRF token. Checking connection...")
+        print("[-] Could not extract initial CSRF token.")
         if is_already_connected():
-            print("[+] Internet is reachable!")
+            print("[+] Connection verified. Already online!")
             return True
-        print("[-] Portal page did not contain verification token.")
         return False
 
     print("[*] [Step 2/3] Submitting phone number verification...")
@@ -80,12 +121,12 @@ def login(phone: str, password: str, country_code: str = "90", flag_code: str = 
 
     try:
         check_res = session.post(
-            f"{PORTAL_URL}/LandingCheck",
+            f"{PORTAL_BASE}/LandingCheck",
             json=landing_payload,
             headers={
                 "Content-Type": "application/json",
                 "X-CSRF-TOKEN": token1,
-                "Referer": landing_res.url
+                "Referer": portal_landing_url
             },
             timeout=10
         )
@@ -94,7 +135,7 @@ def login(phone: str, password: str, country_code: str = "90", flag_code: str = 
         return False
 
     if check_res.status_code == 429:
-        print("[-] Rate limit exceeded (HTTP 429). Please wait 1-5 minutes.")
+        print("[-] Rate limit reached (HTTP 429). Please wait a few minutes before retrying.")
         return False
 
     token2 = extract_token(check_res.text)
@@ -102,16 +143,18 @@ def login(phone: str, password: str, country_code: str = "90", flag_code: str = 
         print("[-] Failed to retrieve secondary verification token.")
         return False
 
+    time.sleep(1)
+
     print("[*] [Step 3/3] Authenticating password...")
     login_payload = {"Password": password}
     try:
         login_res = session.post(
-            f"{PORTAL_URL}/Login",
+            f"{PORTAL_BASE}/Login",
             json=login_payload,
             headers={
                 "Content-Type": "application/json",
                 "X-CSRF-TOKEN": token2,
-                "Referer": PORTAL_URL
+                "Referer": portal_landing_url
             },
             timeout=10
         )
@@ -142,7 +185,6 @@ def main():
     parser.add_argument("--env-file", help="Path to custom .env file", default=None)
     args = parser.parse_args()
 
-    # Look for .env in current directory, script directory, or ~/.config/ibbwifi/.env
     search_paths = [
         Path(args.env_file) if args.env_file else None,
         Path.cwd() / ".env",
