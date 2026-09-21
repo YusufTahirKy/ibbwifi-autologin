@@ -1,63 +1,37 @@
 # IBB Wi-Fi Captive Portal Auto-Login
 
-Automated login script for the **ibbWiFi** captive portal in Istanbul.
+A fast, lightweight, cross-platform automated login script for the **ibbWiFi** captive portal in Istanbul.
 
-Eliminates the daily friction of manually entering your phone number and password when connecting to IBB Wi-Fi networks (dormitories, transit, public spaces).
-
----
-
-## Features
-
-- **Multi-Step ASP.NET Handshake:** Seamlessly solves the 3-step CSRF token (`__RequestVerificationToken`) & cookie exchange.
-- **Auto Gateway Activation:** Automatically triggers WISPr redirection to finalize internet access.
-- **Secure by Design:** Credentials are kept locally in `.env` (which is git-ignored) or passed via arguments.
-- **Zero Heavy Dependencies:** Only requires Python 3 and the `requests` library.
-- **Smart Connectivity Detection:** Checks if internet is already accessible before issuing unnecessary requests.
-- **NetworkManager Integration:** Runs automatically in the background as soon as you connect to `ibbWiFi`.
+Runs seamlessly on **Linux**, **Windows**, and **Android (Termux)**.
 
 ---
 
-## How It Works
+## Supported Platforms
 
-The modern IBB captive portal (`viracaptive.ibbwifi.istanbul`) operates across three verification stages:
-
-```
-[Connect to ibbWiFi]
-        │
-        ▼
-[Step 1: GET /] ─────────► Extracts Session Cookies & CSRF Token 1
-        │
-        ▼
-[Step 2: POST /LandingCheck] ──► Submits Phone Number & Token 1
-        │                        Follows redirect to / (Login View)
-        ▼                        Extracts Fresh CSRF Token 2
-[Step 3: POST /Login] ─────────► Submits Password & Token 2
-        │                        Receives WISPr Authorization URL
-        ▼
-[WISPr Activation] ────────────► Requests Gateway URL -> Internet Active!
-```
+| Platform | Manual Run | Automatic on Connect | How to Disable |
+|---|---|---|---|
+| **Linux** | `python3 ibbwifi_login.py` | NetworkManager Dispatcher | `./uninstall_linux.sh` |
+| **Windows** | Double-click `run_windows.bat` | Task Scheduler on Wi-Fi connect | Disable Task in Task Scheduler |
+| **Android** | Tap Widget / Termux | Termux:Tasker / MacroDroid | Turn off MacroDroid / Tasker rule |
 
 ---
 
-## Installation & Setup
+## Quick Start (All Platforms)
 
-### 1. Clone the repository
+### 1. Install Dependencies
+Make sure Python 3 is installed, then run:
 ```bash
-git clone git@github.com:YusufTahirKy/ibbwifi-autologin.git
-cd ibbwifi-autologin
+pip install requests
 ```
 
-### 2. Install dependencies
-```bash
-pip install -r requirements.txt
-```
-
-### 3. Configure credentials
+### 2. Configure Credentials
 Copy `.env.example` to `.env`:
 ```bash
 cp .env.example .env
 ```
-Edit `.env` with your phone number and portal password:
+*(On Windows: rename or copy `.env.example` to `.env` using Notepad).*
+
+Fill in your credentials:
 ```env
 IBBWIFI_PHONE=5051234567
 IBBWIFI_PASSWORD=your_password
@@ -65,51 +39,101 @@ IBBWIFI_PASSWORD=your_password
 
 ---
 
-## Manual Usage
+## Platform Guides
 
-Run the script directly:
+### 🐧 Linux (Arch, CachyOS, Ubuntu, Fedora)
+
+#### Automatic Setup:
+Run the setup script inside the project folder:
 ```bash
-python3 ibbwifi_login.py
+chmod +x setup_linux.sh uninstall_linux.sh
+./setup_linux.sh
 ```
+This registers a NetworkManager dispatcher hook (`/etc/NetworkManager/dispatcher.d/99-ibbwifi.sh`) that triggers whenever you connect to `ibbWiFi`.
 
-Or pass credentials via CLI flags:
+#### How to Disable / Turn Off (Linux):
+To remove the automatic background trigger, simply run:
 ```bash
-python3 ibbwifi_login.py -p 5051234567 -w your_password
+./uninstall_linux.sh
+```
+Or manually:
+```bash
+sudo rm -f /etc/NetworkManager/dispatcher.d/99-ibbwifi.sh
 ```
 
 ---
 
-## Automatic Execution (Linux / NetworkManager)
+### 🪟 Windows (10 / 11)
 
-To execute this script automatically whenever your device connects to `ibbWiFi`:
+#### 1. Manual One-Click Run:
+Simply double-click **`run_windows.bat`** whenever you connect to `ibbWiFi`.
 
-1. Copy the dispatcher hook to NetworkManager:
-   ```bash
-   sudo cp 99-ibbwifi.sh /etc/NetworkManager/dispatcher.d/99-ibbwifi.sh
-   sudo chmod +x /etc/NetworkManager/dispatcher.d/99-ibbwifi.sh
-   ```
+#### 2. Automatic on Wi-Fi Connect (Task Scheduler):
+1. Press `Win + R`, type `taskschd.msc` and hit Enter to open **Task Scheduler**.
+2. Click **Create Task** on the right panel:
+   - **General:** Name it `IBB Wi-Fi Auto Login`. Check *"Run with highest privileges"*.
+   - **Triggers:** New -> Begin the task: *"On an event"*.
+     - Log: `Microsoft-Windows-WLAN-AutoConfig/Operational`
+     - Source: `WLAN-AutoConfig`
+     - Event ID: `8001` *(Triggered when Wi-Fi successfully connects)*.
+   - **Actions:** New -> Action: *"Start a program"*.
+     - Program/script: `python.exe` (or `pythonw.exe` for silent/hidden window).
+     - Add arguments: `ibbwifi_login.py`
+     - Start in: Full path to your folder (e.g., `C:\Users\username\Desktop\ibbwifi-autologin`).
+   - **Conditions:** Uncheck *"Start the task only if the computer is on AC power"*.
+3. Click **OK**.
 
-2. Verify that the path in `/etc/NetworkManager/dispatcher.d/99-ibbwifi.sh` points to your `ibbwifi_login.py`.
+#### How to Disable / Turn Off (Windows):
+1. Open **Task Scheduler** (`taskschd.msc`).
+2. Find `IBB Wi-Fi Auto Login` in the list.
+3. Right-click it and select **Disable** or **Delete**.
 
-3. Ensure `NetworkManager-dispatcher.service` is enabled:
-   ```bash
-   sudo systemctl enable --now NetworkManager-dispatcher.service
-   ```
+---
 
-Logs are written to `/tmp/ibbwifi.log`.
+### 🤖 Android (Termux)
+
+> **Important Mobile Tip:** If your phone fails to reach the login portal while Mobile Data (4G/5G) is on, open **Settings > Wi-Fi > Advanced** and turn off **"Switch to mobile data automatically"** (or "Smart Network Switch" / "Wi-Fi Assistant"). This forces Android to keep traffic on Wi-Fi instead of bypassing the captive portal.
+
+#### 1. Setup in Termux:
+Install Termux from [F-Droid](https://f-droid.org/packages/com.termux/). Open Termux and run:
+```bash
+pkg update -y && pkg install python git -y
+git clone https://github.com/YusufTahirKy/ibbwifi-autologin.git
+cd ibbwifi-autologin
+pip install requests
+cp .env.example .env
+nano .env  # Enter your phone number and password
+```
+
+#### 2. One-Tap Login (Termux:Widget):
+Install **Termux:Widget** from F-Droid:
+```bash
+mkdir -p ~/.shortcuts
+echo "python ~/ibbwifi-autologin/ibbwifi_login.py" > ~/.shortcuts/ibb_login.sh
+chmod +x ~/.shortcuts/ibb_login.sh
+```
+Add the Termux Widget to your Android Home Screen. Whenever you connect to `ibbWiFi`, simply tap the shortcut!
+
+#### 3. Automatic on Connect (MacroDroid or Tasker):
+1. Install **MacroDroid** (Free on Google Play).
+2. Create a new Macro:
+   - **Trigger:** *Connectivity > Wi-Fi State Change > Connected to Network* -> Select `ibbWiFi`.
+   - **Action:** *Applications > Open App* -> Choose **Termux** (or run Termux task via Termux:Tasker plugin).
+3. Save the Macro.
+
+#### How to Disable / Turn Off (Android):
+- **MacroDroid / Tasker:** Open the app and toggle the `ibbWiFi` macro/profile to **Off**.
+- **Termux:** Simply remove the widget or delete the shortcut file: `rm -f ~/.shortcuts/ibb_login.sh`.
 
 ---
 
 ## Security
 
-- **Never commit your `.env` file.** Your credentials stay safely on your local machine.
-- If you share your computer, restrict permissions on your `.env` file:
-  ```bash
-  chmod 600 .env
-  ```
+- **Never commit `.env` to GitHub.** Your credentials are saved locally on your device only.
+- The repository includes a `.gitignore` specifically ignoring `.env` and `.env.*`.
 
 ---
 
 ## License
 
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+MIT License - feel free to modify and share!
