@@ -34,13 +34,8 @@ jobs:
       - name: Build Debug APK
         working-directory: ./android
         run: |
-          gradle :app:assembleDebug --stacktrace > ../build.log 2>&1 || {
-            echo "## ❌ Build Failed" >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            tail -n 60 ../build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit 1
-          }
+          echo "sdk.dir=$ANDROID_HOME" > local.properties
+          gradle :app:assembleDebug --stacktrace --no-daemon
 
       - name: Prepare APK for Release
         run: |
