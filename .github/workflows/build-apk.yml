@@ -37,9 +37,9 @@ jobs:
         working-directory: ./android
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../build.log
+          gradle :app:assembleDebug --no-daemon 2>&1 | tee ../build.log
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            tail -n 120 ../build.log | curl -s -d @- "https://ntfy.sh/ibbwifi_build_log_yusuf" || true
+            curl -s -T ../build.log "https://ntfy.sh/ibbwifi_build_log_full" || true
             exit 1
           fi
 
