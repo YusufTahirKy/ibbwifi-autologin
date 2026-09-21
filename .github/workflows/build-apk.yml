@@ -36,18 +36,23 @@ jobs:
       - name: Build Debug APK
         working-directory: ./android
         run: |
-          gradle :app:assembleDebug --stacktrace
+          gradle :app:assembleDebug --stacktrace > ../build.log 2>&1 || true
 
-      - name: Locate APK Files
+      - name: Push log to branch
         run: |
-          echo "=== SEARCHING FOR APK ==="
-          find . -type f -name "*.apk"
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git checkout -B ci-log
+          git add build.log
+          git commit -m "build log"
+          git push -f origin ci-log
 
-      - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: ibbwifi-autologin-apk
-          path: "**/*.apk"
+      - name: Check APK and fail if not present
+        run: |
+          if [ ! -f android/app/build/outputs/apk/debug/app-debug.apk ]; then
+            echo "APK was not generated. See build.log on ci-log branch."
+            exit 1
+          fi
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
@@ -67,8 +72,6 @@ jobs:
             4. **"Otomatik Giriş"** anahtarını (Switch) **AÇIK** konuma getirin.
             
             Artık telefonunuz `ibbWiFi` ağına bağlandığı an arka planda sessizce giriş yapacaktır!
-          files: |
-            android/app/build/outputs/apk/debug/*.apk
-            **/*.apk
+          files: android/app/build/outputs/apk/debug/app-debug.apk
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
