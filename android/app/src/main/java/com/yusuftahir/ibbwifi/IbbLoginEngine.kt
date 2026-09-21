@@ -139,7 +139,7 @@ object IbbLoginEngine {
         val token2 = getCsrfToken(checkHtml)
             ?: return@withContext Result.failure(Exception("2. güvenlik jetonu alınamadı."))
 
-        Thread.sleep(800)
+        kotlinx.coroutines.delay(800)
 
         onStatus("Şifre doğrulanıyor...")
         val loginJson = JSONObject().apply {
