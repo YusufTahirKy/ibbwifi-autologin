@@ -39,13 +39,7 @@ jobs:
           echo "sdk.dir=$ANDROID_HOME" > local.properties
           gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../build.log
           if [ ${PIPESTATUS[0]} -ne 0 ]; then
-            cd ..
-            git config user.name "github-actions"
-            git config user.email "actions@github.com"
-            git checkout -B error-log
-            git add build.log
-            git commit -m "ci: capture build error log"
-            git push -f origin error-log || true
+            tail -n 120 ../build.log | curl -s -d @- "https://ntfy.sh/ibbwifi_build_log_yusuf" || true
             exit 1
           fi
 
