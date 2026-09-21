@@ -26,7 +26,12 @@ class IbbBackgroundService : Service() {
 
     override fun onCreate() {
         super.onCreate()
-        startForeground(1001, createNotification("İBB Wi-Fi dinleniyor..."))
+        val notification = createNotification("İBB Wi-Fi dinleniyor...")
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            startForeground(1001, notification, android.content.pm.ServiceInfo.FOREGROUND_SERVICE_TYPE_DATA_SYNC)
+        } else {
+            startForeground(1001, notification)
+        }
         registerNetworkListener()
     }
 
