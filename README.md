@@ -10,9 +10,12 @@ Runs seamlessly on **Linux**, **Windows**, and **Android (Termux)**.
 
 | Platform | Manual Run | Automatic on Connect | How to Disable |
 |---|---|---|---|
+| **Android (.APK)** | Tap "Şimdi Giriş Yap" | Background Auto-Login | Switch to OFF |
 | **Linux** | `python3 ibbwifi_login.py` | NetworkManager Dispatcher | `./uninstall_linux.sh` |
 | **Windows** | Double-click `run_windows.bat` | Task Scheduler on Wi-Fi connect | Disable Task in Task Scheduler |
-| **Android** | Tap Widget / Termux | Termux:Tasker / MacroDroid | Turn off MacroDroid / Tasker rule |
+| **Android (Termux)**| Tap Widget / Termux | Termux:Tasker / MacroDroid | Turn off MacroDroid / Tasker rule |
+
+> 📱 **Android Kullanıcıları İçin:** Python kurmak istemiyorsanız, doğrudan GitHub [Releases](https://github.com/YusufTahirKy/ibbwifi-autologin/releases) sayfasından **`app-debug.apk`** dosyasını indirip telefonunuza yükleyebilirsiniz!
 
 ---
 
