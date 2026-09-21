@@ -37,22 +37,17 @@ jobs:
         working-directory: ./android
         run: |
           echo "sdk.dir=$ANDROID_HOME" > local.properties
-          set -o pipefail
           gradle :app:assembleDebug --stacktrace --no-daemon 2>&1 | tee ../build.log
-
-      - name: Handle Failure
-        if: failure()
-        run: |
-          echo "::error title=Gradle Build Error::$(grep -E '(e: |FAILURE:|error:|Exception:)' ../build.log | head -n 5)"
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          tail -n 80 ../build.log >> $GITHUB_STEP_SUMMARY
-          echo '```' >> $GITHUB_STEP_SUMMARY
-          git config user.name "github-actions"
-          git config user.email "actions@github.com"
-          git checkout -B error-log
-          git add ../build.log
-          git commit -m "ci: capture build error log"
-          git push -f origin error-log || true
+          if [ ${PIPESTATUS[0]} -ne 0 ]; then
+            cd ..
+            git config user.name "github-actions"
+            git config user.email "actions@github.com"
+            git checkout -B error-log
+            git add build.log
+            git commit -m "ci: capture build error log"
+            git push -f origin error-log || true
+            exit 1
+          fi
 
       - name: Prepare APK for Release
         run: |
