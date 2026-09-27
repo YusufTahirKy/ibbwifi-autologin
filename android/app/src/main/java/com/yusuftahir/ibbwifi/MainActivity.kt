@@ -64,8 +64,8 @@ class MainActivity : AppCompatActivity() {
 
         // Save Button: adds or updates account
         binding.btnSave.setOnClickListener {
-            val phone = binding.etPhone.text.toString().trim()
-            val pass = binding.etPassword.text.toString().trim()
+            val phone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val pass = binding.etPassword.text?.toString()?.trim().orEmpty()
 
             if (phone.isBlank() || pass.isBlank()) {
                 setStatusText("Lütfen telefon ve şifre girin.", StatusType.ERROR)
@@ -107,8 +107,10 @@ class MainActivity : AppCompatActivity() {
         // Open in Browser (192.168.1.1)
         binding.btnOpenBrowser.setOnClickListener {
             val selected = accounts.firstOrNull { it.isSelected }
-            val phone = if (binding.etPhone.text.isNotBlank()) binding.etPhone.text.toString().trim() else selected?.phone.orEmpty()
-            val pass = if (binding.etPassword.text.isNotBlank()) binding.etPassword.text.toString().trim() else selected?.pass.orEmpty()
+            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
+            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
+            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
 
             if (pass.isNotBlank()) {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
@@ -127,8 +129,8 @@ class MainActivity : AppCompatActivity() {
 
         // Connect Button (Masaüstü Modu)
         binding.btnConnectNow.setOnClickListener {
-            val typedPhone = binding.etPhone.text.toString().trim()
-            val typedPass = binding.etPassword.text.toString().trim()
+            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
 
             val selected = accounts.firstOrNull { it.isSelected }
             val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
