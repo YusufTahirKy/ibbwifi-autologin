@@ -2,18 +2,22 @@ package com.yusuftahir.ibbwifi
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.Network
 import android.net.NetworkCapabilities
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
 import okhttp3.CookieJar
+import okhttp3.Dns
 import okhttp3.HttpUrl
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.net.InetAddress
+import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
 
@@ -22,7 +26,35 @@ object IbbLoginEngine {
     private const val PORTAL_URL = "https://viracaptive.ibbwifi.istanbul"
     private const val CHECK_URL = "http://connectivitycheck.gstatic.com/generate_204"
 
-    fun bindToWifi(context: Context): Boolean {
+    class CaptiveDns(private val wifiNetwork: Network?) : Dns {
+        override fun lookup(hostname: String): List<InetAddress> {
+            // 1. First attempt: resolve using Wi-Fi interface DNS
+            if (wifiNetwork != null) {
+                try {
+                    val addrs = wifiNetwork.getAllByName(hostname).toList()
+                    if (addrs.isNotEmpty()) return addrs
+                } catch (ignored: Exception) {}
+            }
+
+            // 2. Second attempt: system DNS
+            try {
+                val addrs = Dns.SYSTEM.lookup(hostname)
+                if (addrs.isNotEmpty()) return addrs
+            } catch (ignored: Exception) {}
+
+            // 3. Fallback for IBB internal domains if Android Private DNS caused NXDOMAIN
+            if (hostname.equals("viracaptive.ibbwifi.istanbul", ignoreCase = true)) {
+                return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 200.toByte())))
+            }
+            if (hostname.equals("captive.ibbwifi.istanbul", ignoreCase = true)) {
+                return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 102.toByte())))
+            }
+
+            throw UnknownHostException("Unable to resolve host \"$hostname\"")
+        }
+    }
+
+    fun getWifiNetwork(context: Context): Network? {
         try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
@@ -32,7 +64,7 @@ object IbbLoginEngine {
                 }
                 if (wifiNetwork != null) {
                     cm.bindProcessToNetwork(wifiNetwork)
-                    return true
+                    return wifiNetwork
                 }
             } else {
                 @Suppress("DEPRECATION")
@@ -43,20 +75,21 @@ object IbbLoginEngine {
                 if (wifiNetwork != null) {
                     @Suppress("DEPRECATION")
                     ConnectivityManager.setProcessDefaultNetwork(wifiNetwork)
-                    return true
+                    return wifiNetwork
                 }
             }
         } catch (ignored: Exception) {}
-        return false
+        return null
     }
 
-    private fun createClient(): OkHttpClient {
+    private fun createClient(wifiNetwork: Network?): OkHttpClient {
         val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
-        return OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .connectTimeout(15, TimeUnit.SECONDS)
             .readTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
+            .dns(CaptiveDns(wifiNetwork))
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
@@ -78,7 +111,14 @@ object IbbLoginEngine {
                     return map.values.toList()
                 }
             })
-            .build()
+
+        if (wifiNetwork != null) {
+            try {
+                builder.socketFactory(wifiNetwork.socketFactory)
+            } catch (ignored: Exception) {}
+        }
+
+        return builder.build()
     }
 
     suspend fun isAlreadyConnected(client: OkHttpClient): Boolean = withContext(Dispatchers.IO) {
@@ -128,8 +168,8 @@ object IbbLoginEngine {
         onStatus: (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
         onStatus("Wi-Fi ağına bağlanılıyor...")
-        val hasWifi = bindToWifi(context)
-        if (!hasWifi) {
+        val wifiNetwork = getWifiNetwork(context)
+        if (wifiNetwork == null) {
             return@withContext Result.failure(Exception("Telefonunuz bir Wi-Fi ağına bağlı görünmüyor. Lütfen önce ibbWiFi ağına bağlanın."))
         }
 
@@ -137,7 +177,7 @@ object IbbLoginEngine {
             return@withContext Result.failure(Exception("Telefon veya şifre boş bırakılamaz."))
         }
 
-        val client = createClient()
+        val client = createClient(wifiNetwork)
 
         if (isAlreadyConnected(client)) {
             onStatus("Zaten internete bağlısınız.")
@@ -224,7 +264,7 @@ object IbbLoginEngine {
             onStatus("Giriş başarılı! İnternet aktif.")
             return@withContext Result.success("Giriş başarılı! İnternet aktif.")
         } else {
-            val errMsg = json.optString("message", "Giriş başarısız oldu. Şifrenizi kontrol edin.")
+            val errMsg = json.optString("message", "Giriş başarısız oldu. Lütfen şifrenizi kontrol edin.")
             return@withContext Result.failure(Exception(errMsg))
         }
     }
