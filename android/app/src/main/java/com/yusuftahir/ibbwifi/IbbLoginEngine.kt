@@ -85,22 +85,58 @@ object IbbLoginEngine {
         return null
     }
 
+    private fun isConnected(wifiNetwork: Network?): Boolean {
+        return try {
+            val checkClient = OkHttpClient.Builder()
+                .connectTimeout(3, TimeUnit.SECONDS)
+                .readTimeout(3, TimeUnit.SECONDS)
+                .followRedirects(false)
+                .dns(CaptiveDns(wifiNetwork))
+                .build()
+            val req = Request.Builder().url(CHECK_URL).build()
+            checkClient.newCall(req).execute().use { it.code == 204 }
+        } catch (e: Exception) {
+            false
+        }
+    }
+
     private fun createClient(wifiNetwork: Network?): OkHttpClient {
         val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
         return OkHttpClient.Builder()
-            .connectTimeout(12, TimeUnit.SECONDS)
-            .readTimeout(12, TimeUnit.SECONDS)
-            .followRedirects(true)
-            .followSslRedirects(true)
+            .connectTimeout(10, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
             .dns(CaptiveDns(wifiNetwork))
             .addInterceptor { chain ->
-                val request = chain.request().newBuilder()
+                val originalRequest = chain.request().newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
                     .header("Accept", "*/*")
                     .header("Origin", PORTAL_URL)
                     .build()
-                chain.proceed(request)
+
+                var response = chain.proceed(originalRequest)
+                var currentRequest = originalRequest
+                var redirectCount = 0
+
+                // Custom redirect loop: follow internal IBB redirects, but NEVER follow external URLs (like httpvshttps.com)
+                while (response.isRedirect && redirectCount < 5) {
+                    val location = response.header("Location") ?: break
+                    val nextUrl = currentRequest.url.resolve(location) ?: break
+
+                    // Stop if redirected to an external domain outside IBB
+                    if (!nextUrl.host.contains("ibbwifi.istanbul", ignoreCase = true)) {
+                        break
+                    }
+
+                    response.close()
+                    currentRequest = currentRequest.newBuilder().url(nextUrl).build()
+                    response = chain.proceed(currentRequest)
+                    redirectCount++
+                }
+
+                response
             }
             .cookieJar(object : CookieJar {
                 override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
@@ -124,28 +160,15 @@ object IbbLoginEngine {
     }
 
     private fun detectPortalUrl(client: OkHttpClient): String {
-        val probeClient = client.newBuilder()
-            .connectTimeout(4, TimeUnit.SECONDS)
-            .readTimeout(4, TimeUnit.SECONDS)
-            .build()
-
-        val testUrls = listOf(
-            CHECK_URL,
-            "http://detectportal.firefox.com/canonical.html",
-            "http://clients3.google.com/generate_204",
-            "http://neverssl.com"
-        )
-        for (url in testUrls) {
-            try {
-                val req = Request.Builder().url(url).build()
-                probeClient.newCall(req).execute().use { res ->
-                    val finalUrl = res.request.url.toString()
-                    if (finalUrl.contains("ibbwifi") || finalUrl.contains("viracaptive")) {
-                        return finalUrl
-                    }
+        try {
+            val req = Request.Builder().url(CHECK_URL).build()
+            client.newCall(req).execute().use { res ->
+                val loc = res.header("Location")
+                if (loc != null && (loc.contains("ibbwifi") || loc.contains("viracaptive"))) {
+                    return loc
                 }
-            } catch (ignored: Exception) {}
-        }
+            }
+        } catch (ignored: Exception) {}
         return "$PORTAL_URL/"
     }
 
@@ -159,6 +182,10 @@ object IbbLoginEngine {
         val wifiNetwork = getWifiNetwork(context)
         if (wifiNetwork == null) {
             return@withContext Result.failure(Exception("Telefonunuz bir Wi-Fi ağına bağlı görünmüyor. Lütfen önce ibbWiFi ağına bağlanın."))
+        }
+
+        if (isConnected(wifiNetwork)) {
+            return@withContext Result.success("🎉 Zaten internete bağlısınız!")
         }
 
         if (phone.isBlank() || pass.isBlank()) {
@@ -182,7 +209,12 @@ object IbbLoginEngine {
         }
 
         val token1 = getCsrfToken(landingHtml)
-            ?: return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. (ibbWiFi kapsama alanında olduğunuzdan emin olun)"))
+            ?: run {
+                if (isConnected(wifiNetwork)) {
+                    return@withContext Result.success("🎉 İnternet bağlantınız zaten aktif!")
+                }
+                return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. (ibbWiFi kapsama alanında olduğunuzdan emin olun)"))
+            }
 
         onStatus("[4/5] Telefon numarası gönderiliyor...")
         val phoneJson = JSONObject().apply {
