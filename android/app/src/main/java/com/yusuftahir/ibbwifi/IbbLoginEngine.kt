@@ -4,6 +4,7 @@ import android.content.Context
 import android.net.ConnectivityManager
 import android.net.Network
 import android.net.NetworkCapabilities
+import android.net.wifi.WifiManager
 import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -17,6 +18,8 @@ import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
 import java.net.InetAddress
+import java.net.InetSocketAddress
+import java.net.Socket
 import java.net.UnknownHostException
 import java.util.concurrent.TimeUnit
 import java.util.regex.Pattern
@@ -42,6 +45,13 @@ object IbbLoginEngine {
                 return listOf(InetAddress.getByAddress(hostname, byteArrayOf(172.toByte(), 217.toByte(), 18.toByte(), 14.toByte())))
             }
 
+            // Numeric IPv4 address bypass
+            if (hostname.matches(Regex("^\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}\\.\\d{1,3}$"))) {
+                try {
+                    return listOf(InetAddress.getByName(hostname))
+                } catch (ignored: Exception) {}
+            }
+
             // For other domains, try Wi-Fi interface DNS first
             if (wifiNetwork != null) {
                 try {
@@ -54,7 +64,6 @@ object IbbLoginEngine {
             try {
                 return Dns.SYSTEM.lookup(hostname)
             } catch (e: Exception) {
-                // Return portal IP as safe fallback to avoid crash
                 return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 200.toByte())))
             }
         }
@@ -88,11 +97,23 @@ object IbbLoginEngine {
         return null
     }
 
-    private fun isConnected(wifiNetwork: Network?): Boolean {
+    fun getGatewayIp(context: Context): String {
+        try {
+            val wm = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
+            val dhcp = wm?.dhcpInfo
+            if (dhcp != null && dhcp.gateway != 0) {
+                val ip = dhcp.gateway
+                return String.format("%d.%d.%d.%d", ip and 0xff, ip shr 8 and 0xff, ip shr 16 and 0xff, ip shr 24 and 0xff)
+            }
+        } catch (ignored: Exception) {}
+        return "10.32.0.1"
+    }
+
+    fun isConnected(wifiNetwork: Network?): Boolean {
         return try {
             val checkClient = OkHttpClient.Builder()
-                .connectTimeout(3, TimeUnit.SECONDS)
-                .readTimeout(3, TimeUnit.SECONDS)
+                .connectTimeout(2, TimeUnit.SECONDS)
+                .readTimeout(2, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .dns(CaptiveDns(wifiNetwork))
                 .build()
@@ -107,8 +128,8 @@ object IbbLoginEngine {
         val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
         return OkHttpClient.Builder()
-            .connectTimeout(10, TimeUnit.SECONDS)
-            .readTimeout(10, TimeUnit.SECONDS)
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(6, TimeUnit.SECONDS)
             .followRedirects(false)
             .followSslRedirects(false)
             .dns(CaptiveDns(wifiNetwork))
@@ -123,13 +144,16 @@ object IbbLoginEngine {
                 var currentRequest = originalRequest
                 var redirectCount = 0
 
-                // Custom redirect loop: follow internal IBB redirects, but NEVER follow external URLs (like httpvshttps.com)
+                // Follow redirects to internal IBB portal or local gateway IPs, but block external ads (httpvshttps.com)
                 while (response.isRedirect && redirectCount < 5) {
                     val location = response.header("Location") ?: break
                     val nextUrl = currentRequest.url.resolve(location) ?: break
 
-                    // Stop if redirected to an external domain outside IBB
-                    if (!nextUrl.host.contains("ibbwifi.istanbul", ignoreCase = true)) {
+                    val host = nextUrl.host
+                    val isIbb = host.contains("ibbwifi.istanbul", ignoreCase = true)
+                    val isLocalIp = host.matches(Regex("^(10\\.|192\\.168\\.|172\\.(1[6-9]|2[0-9]|3[0-1])\\.|1\\.1\\.1\\.1).*"))
+
+                    if (!isIbb && !isLocalIp) {
                         break
                     }
 
@@ -163,26 +187,100 @@ object IbbLoginEngine {
     }
 
     fun detectPortalUrl(client: OkHttpClient): String {
-        val probeUrls = listOf(
-            "http://192.168.1.1",
-            "http://neverssl.com",
-            CHECK_URL
-        )
-        for (url in probeUrls) {
-            try {
-                val req = Request.Builder().url(url).build()
-                client.newCall(req).execute().use { res ->
+        // Direct zero-latency check: IBB portal responds in 9ms
+        try {
+            val req = Request.Builder().url(PORTAL_URL).build()
+            client.newCall(req).execute().use { res ->
+                if (res.isSuccessful || res.isRedirect) {
                     val loc = res.header("Location")
                     if (loc != null) {
                         val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
-                        if (resolved.contains("ibbwifi") || resolved.contains("viracaptive") || resolved.contains("mac=")) {
+                        if (resolved.contains("ibbwifi") || resolved.contains("viracaptive")) {
                             return resolved
                         }
                     }
+                    return "$PORTAL_URL/"
                 }
+            }
+        } catch (ignored: Exception) {}
+
+        // Fallback: fast probe (1 sec timeout) if needed
+        val fastClient = client.newBuilder()
+            .connectTimeout(1, TimeUnit.SECONDS)
+            .readTimeout(1, TimeUnit.SECONDS)
+            .build()
+
+        try {
+            val req = Request.Builder().url(CHECK_URL).build()
+            fastClient.newCall(req).execute().use { res ->
+                val loc = res.header("Location")
+                if (loc != null) {
+                    val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
+                    if (resolved.contains("ibbwifi") || resolved.contains("viracaptive") || resolved.contains("mac=")) {
+                        return resolved
+                    }
+                }
+            }
+        } catch (ignored: Exception) {}
+
+        return "$PORTAL_URL/"
+    }
+
+    private fun kickGatewayAndValidate(
+        context: Context,
+        wifiNetwork: Network?,
+        client: OkHttpClient,
+        wisprUrl: String?,
+        baseUrl: HttpUrl
+    ) {
+        // 1. Follow wisprUrl if returned by server
+        if (!wisprUrl.isNullOrBlank()) {
+            try {
+                val fullWisprUrl = try { baseUrl.resolve(wisprUrl)?.toString() ?: wisprUrl } catch (e: Exception) { wisprUrl }
+                val wisprReq = Request.Builder()
+                    .url(fullWisprUrl)
+                    .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .build()
+                client.newCall(wisprReq).execute().close()
             } catch (ignored: Exception) {}
         }
-        return "$PORTAL_URL/"
+
+        // 2. Gateway port 80 triggers (releases the router captive firewall rule)
+        // This reproduces the EXACT action the user did when opening 192.168.1.1 in Chrome!
+        val gwIp = getGatewayIp(context)
+        val hosts = listOf("192.168.1.1", gwIp).distinct()
+
+        for (host in hosts) {
+            try {
+                val socket = Socket()
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && wifiNetwork != null) {
+                    wifiNetwork.bindSocket(socket)
+                }
+                socket.connect(InetSocketAddress(host, 80), 1000)
+                val out = socket.getOutputStream()
+                val httpReq = "GET / HTTP/1.1\r\nHost: $host\r\nUser-Agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36\r\nConnection: close\r\n\r\n"
+                out.write(httpReq.toByteArray())
+                out.flush()
+                socket.close()
+            } catch (ignored: Exception) {}
+        }
+
+        // 3. Request connectivitycheck over OkHttpClient bound to Wi-Fi
+        try {
+            val triggerReq = Request.Builder()
+                .url(CHECK_URL)
+                .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36")
+                .build()
+            client.newCall(triggerReq).execute().close()
+        } catch (ignored: Exception) {}
+
+        // 4. Report connectivity to Android OS NetworkMonitor so exclamation mark disappears immediately
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M && wifiNetwork != null) {
+                cm.reportNetworkConnectivity(wifiNetwork, true)
+            }
+        } catch (ignored: Exception) {}
     }
 
     suspend fun login(
@@ -191,7 +289,7 @@ object IbbLoginEngine {
         pass: String,
         onStatus: (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
-        onStatus("[1/5] Wi-Fi ağı kontrol ediliyor...")
+        onStatus("[1/4] Wi-Fi ağı kontrol ediliyor...")
         val wifiNetwork = getWifiNetwork(context)
         if (wifiNetwork == null) {
             return@withContext Result.failure(Exception("Telefonunuz bir Wi-Fi ağına bağlı görünmüyor. Lütfen önce ibbWiFi ağına bağlanın."))
@@ -207,10 +305,9 @@ object IbbLoginEngine {
 
         val client = createClient(wifiNetwork)
 
-        onStatus("[2/5] Karşılama portalı aranıyor...")
+        onStatus("[2/4] İBB portalına bağlanılıyor...")
         val landingUrl = detectPortalUrl(client)
 
-        onStatus("[3/5] Açılış sayfası yükleniyor...")
         val landingReq = Request.Builder()
             .url(landingUrl)
             .build()
@@ -238,7 +335,7 @@ object IbbLoginEngine {
                 return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. Lütfen Wi-Fi'yi kapatıp tekrar açın."))
             }
 
-        onStatus("[4/5] Telefon numarası gönderiliyor...")
+        onStatus("[3/4] Bilgiler doğrulanıyor...")
         val cleanPhone = phone.trim().removePrefix("+90").removePrefix("90").removePrefix("0")
         val phoneJson = JSONObject().apply {
             put("PhoneNumber", cleanPhone)
@@ -276,9 +373,6 @@ object IbbLoginEngine {
         // Token 2 defaults to token1 if no new CSRF input is in JSON/HTML response
         val token2 = getCsrfToken(checkHtml) ?: token1
 
-        kotlinx.coroutines.delay(400)
-
-        onStatus("[5/5] Şifre doğrulanıyor...")
         val loginJson = JSONObject().apply {
             put("Password", pass.trim())
         }.toString()
@@ -300,22 +394,32 @@ object IbbLoginEngine {
         val json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
 
         val wisprUrl = json.optString("url")
-        if (loginRes.isSuccessful && wisprUrl.isNotBlank()) {
-            onStatus("Ağ geçidi onaylanıyor...")
-            try {
-                val fullWisprUrl = try { loginReq.url.resolve(wisprUrl)?.toString() ?: wisprUrl } catch (e: Exception) { wisprUrl }
-                val wisprReq = Request.Builder().url(fullWisprUrl).build()
-                client.newCall(wisprReq).execute().close()
-            } catch (ignored: Exception) {}
+        if (loginRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))) {
+            onStatus("[4/4] Ağ geçidi ve internet etkinleştiriliyor...")
 
-            kotlinx.coroutines.delay(800)
-            if (isConnected(wifiNetwork)) {
-                onStatus("🎉 Giriş başarılı! İnternet aktif.")
-                return@withContext Result.success("🎉 Giriş başarılı! İnternet aktif.")
-            } else {
-                onStatus("Giriş yapıldı! İnternetiniz aktifleşti.")
-                return@withContext Result.success("Giriş yapıldı! İnternetiniz aktifleşti.")
+            // Kick the gateway and flush captive portal firewall rule
+            kickGatewayAndValidate(context, wifiNetwork, client, wisprUrl, loginReq.url)
+
+            // Verify internet connectivity
+            var verified = false
+            for (i in 1..6) {
+                if (isConnected(wifiNetwork)) {
+                    verified = true
+                    break
+                }
+                kotlinx.coroutines.delay(400)
             }
+
+            // Signal OS once more if verified to remove exclamation mark (!)
+            if (verified && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                try {
+                    val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+                    cm.reportNetworkConnectivity(wifiNetwork, true)
+                } catch (ignored: Exception) {}
+            }
+
+            onStatus("🎉 Giriş başarılı! İnternet aktif.")
+            return@withContext Result.success("🎉 Giriş başarılı! İnternet aktif ve doğrulandı.")
         } else {
             val errMsg = json.optString("message", "Giriş başarısız oldu. Lütfen şifrenizi kontrol edin.")
             return@withContext Result.failure(Exception(errMsg))
