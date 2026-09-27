@@ -543,6 +543,9 @@ object IbbLoginEngine {
 
         val loginJson = JSONObject().apply {
             put("Password", pass.trim())
+            put("Force", true)
+            put("ForceLogin", true)
+            put("TerminatePrevious", true)
         }.toString()
 
         val loginReq = Request.Builder()
@@ -558,11 +561,38 @@ object IbbLoginEngine {
             return@withContext Result.failure(Exception("Giriş isteği hatası: ${e.message}"))
         }
 
-        val loginBody = loginRes.use { it.body?.string().orEmpty() }
-        val json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
+        var loginBody = loginRes.use { it.body?.string().orEmpty() }
+        var json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
+        var wisprUrl = json.optString("url")
+        var isSuccess = loginRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))
 
-        val wisprUrl = json.optString("url")
-        if (loginRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))) {
+        // If login failed due to existing session conflict, try sending a logout to clear stale server state and retry login once
+        if (!isSuccess) {
+            val initialErr = json.optString("message", "")
+            if (initialErr.contains("Oturum açma", ignoreCase = true) ||
+                initialErr.contains("hata meydana", ignoreCase = true) ||
+                initialErr.contains("açma sırasında", ignoreCase = true)) {
+                onStatus("[3/4] Önceki oturum temizleniyor, tekrar deneniyor...")
+                logout(context, wifiNetwork)
+                kotlinx.coroutines.delay(1000)
+
+                try {
+                    val retryReq = Request.Builder()
+                        .url("$PORTAL_URL/Login")
+                        .post(loginJson.toRequestBody("application/json".toMediaType()))
+                        .header("X-CSRF-TOKEN", token2)
+                        .header("Referer", landingUrl)
+                        .build()
+                    val retryRes = client.newCall(retryReq).execute()
+                    loginBody = retryRes.use { it.body?.string().orEmpty() }
+                    json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
+                    wisprUrl = json.optString("url")
+                    isSuccess = retryRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))
+                } catch (ignored: Exception) {}
+            }
+        }
+
+        if (isSuccess) {
             onStatus("[4/4] Ağ geçidi ve internet etkinleştiriliyor...")
 
             // Kick the gateway and flush captive portal firewall rule
@@ -593,7 +623,7 @@ object IbbLoginEngine {
             val finalErrMsg = if (errMsg.contains("Oturum açma", ignoreCase = true) ||
                 errMsg.contains("hata meydana", ignoreCase = true) ||
                 errMsg.contains("açma sırasında", ignoreCase = true)) {
-                "⚠️ Önceki Oturum Henüz Kapanmadı: Az önce eski MAC adresinizle bağlıyken 'Ağı Unut' yaptığınız için, İBB sistemi o oturumu 2-3 dakika boyunca açık tutar (Çift oturuma izin verilmez). Lütfen 2-3 dakika bekleyin (eski oturum düşecektir) ve tekrar deneyin."
+                "⚠️ Önceki Oturum Henüz Kapanmadı: Eski MAC adresinizin oturumu İBB sisteminde 2-3 dakika açık kalır. Lütfen 2-3 dakika bekleyin (otomatik servis de aralıklarla deneyecektir) veya '🚪 Oturumu Kapat' butonuna basın."
             } else {
                 errMsg
             }

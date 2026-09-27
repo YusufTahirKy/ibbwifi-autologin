@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
             val pInfo = packageManager.getPackageInfo(packageName, 0)
             binding.tvAppVersion.text = "ibbWiFi Giriş v${pInfo.versionName}"
         } catch (e: Exception) {
-            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.3"
+            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.4"
         }
 
         // Load saved accounts
@@ -170,6 +170,24 @@ class MainActivity : AppCompatActivity() {
         // MAC Reset Shortcut Button
         binding.btnChangeMac.setOnClickListener {
             showMacChangeDialog()
+        }
+
+        // Explicit Logout Button
+        binding.btnLogout.setOnClickListener {
+            lifecycleScope.launch {
+                binding.btnLogout.isEnabled = false
+                setStatusText("İBB oturumu kapatılıyor...", StatusType.PROGRESS)
+                val wifiNetwork = IbbLoginEngine.getWifiNetwork(this@MainActivity)
+                val success = IbbLoginEngine.logout(this@MainActivity, wifiNetwork)
+                binding.btnLogout.isEnabled = true
+                if (success) {
+                    setStatusText("🚪 Oturum kapatıldı! Artık MAC adresinizi değiştirebilir veya 'Ağı Unut' yapabilirsiniz.", StatusType.SUCCESS)
+                    Toast.makeText(this@MainActivity, "Oturum başarıyla kapatıldı.", Toast.LENGTH_SHORT).show()
+                } else {
+                    setStatusText("Oturum kapatma isteği gönderildi. (Portal yanıtı tamamlandı)", StatusType.INFO)
+                    Toast.makeText(this@MainActivity, "Oturum kapatma iletildi.", Toast.LENGTH_SHORT).show()
+                }
+            }
         }
     }
 

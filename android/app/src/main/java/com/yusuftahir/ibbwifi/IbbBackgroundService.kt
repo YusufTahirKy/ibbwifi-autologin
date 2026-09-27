@@ -185,7 +185,8 @@ class IbbBackgroundService : Service() {
 
                 updateNotification("İBB Wi-Fi algılandı, otomatik bağlanılıyor...")
 
-                // Retry loop: up to 3 attempts with 2s delay
+                // Phase 1: Immediate retry loop (3 attempts with 2s delay)
+                var lastErrorMessage = ""
                 for (attempt in 1..3) {
                     val result = IbbLoginEngine.login(applicationContext, phone, password) { status ->
                         updateNotification(status)
@@ -196,12 +197,46 @@ class IbbBackgroundService : Service() {
                         return@launch
                     }
 
+                    lastErrorMessage = result.exceptionOrNull()?.message.orEmpty()
                     if (attempt < 3) {
                         delay(2000L)
                     }
                 }
 
-                updateNotification("Otomatik giriş tamamlanamadı. Yeniden denenecek.")
+                // Phase 2: If failure is due to previous session lock (e.g. after 'Ağı Unut'),
+                // run an Extended Cooldown Loop: İBB RADIUS drops dead MAC sessions after 2-3 minutes.
+                // The service retries every 25 seconds for up to ~2.5 minutes!
+                if (lastErrorMessage.contains("Önceki Oturum", ignoreCase = true) ||
+                    lastErrorMessage.contains("Kapanmadı", ignoreCase = true) ||
+                    lastErrorMessage.contains("Oturum açma", ignoreCase = true) ||
+                    lastErrorMessage.contains("hata meydana", ignoreCase = true) ||
+                    lastErrorMessage.contains("açma sırasında", ignoreCase = true) ||
+                    lastErrorMessage.contains("bekleyin", ignoreCase = true)) {
+
+                    for (cooldownRound in 1..6) {
+                        val waitSec = cooldownRound * 25
+                        updateNotification("⏳ İBB eski oturumu bırakıyor (~${waitSec} sn)... Bekleniyor.")
+                        delay(25000L)
+
+                        val currentWifi = IbbLoginEngine.getWifiNetwork(applicationContext) ?: break
+                        if (IbbLoginEngine.isNetworkOnline(applicationContext, currentWifi)) {
+                            updateNotification("🟢 İBB Wi-Fi bağlı ve internet aktif!")
+                            return@launch
+                        }
+
+                        updateNotification("İBB Wi-Fi tekrar deneniyor ($cooldownRound/6)...")
+                        val retryRes = IbbLoginEngine.login(applicationContext, phone, password) { status ->
+                            updateNotification(status)
+                        }
+
+                        if (retryRes.isSuccess) {
+                            updateNotification("🎉 İBB Wi-Fi Girişi Başarılı! İnternet aktif.")
+                            return@launch
+                        }
+                    }
+                }
+
+                updateNotification("Otomatik giriş tamamlanamadı. Wi-Fi sinyali bekleniyor.")
             } catch (e: Exception) {
                 updateNotification("İBB Wi-Fi dinleniyor...")
             } finally {
@@ -211,14 +246,14 @@ class IbbBackgroundService : Service() {
     }
 
     private fun createNotification(text: String): Notification {
-        val channelId = "ibbwifi_channel"
+        val channelId = "ibbwifi_channel_v2"
         val nm = getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
             val channel = NotificationChannel(
                 channelId,
                 "İBB Wi-Fi Otomatik Giriş",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             )
             nm.createNotificationChannel(channel)
         }

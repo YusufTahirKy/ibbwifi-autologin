@@ -200,20 +200,43 @@
                     app:cornerRadius="12dp"
                     android:layout_marginBottom="10dp" />
 
-                <!-- MAC Reset / Wi-Fi Settings Button -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnChangeMac"
+                <!-- Action Buttons: MAC Change & Explicit Logout -->
+                <LinearLayout
                     android:layout_width="match_parent"
-                    android:layout_height="44dp"
-                    android:text="⚙️ MAC Değiştir / Kilidi Sıfırla"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/primary"
-                    app:strokeColor="@color/primary"
-                    app:strokeWidth="1dp"
-                    android:backgroundTint="@color/input_bg"
-                    app:cornerRadius="10dp"
-                    android:layout_marginBottom="16dp" />
+                    android:layout_height="wrap_content"
+                    android:orientation="horizontal"
+                    android:layout_marginBottom="16dp">
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnChangeMac"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="44dp"
+                        android:text="⚙️ MAC Değiştir"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/primary"
+                        app:strokeColor="@color/primary"
+                        app:strokeWidth="1dp"
+                        android:backgroundTint="@color/input_bg"
+                        app:cornerRadius="10dp"
+                        android:layout_marginEnd="6dp" />
+
+                    <com.google.android.material.button.MaterialButton
+                        android:id="@+id/btnLogout"
+                        android:layout_width="0dp"
+                        android:layout_weight="1"
+                        android:layout_height="44dp"
+                        android:text="🚪 Oturumu Kapat"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="#FF6E6E"
+                        app:strokeColor="#FF6E6E"
+                        app:strokeWidth="1dp"
+                        android:backgroundTint="@color/input_bg"
+                        app:cornerRadius="10dp"
+                        android:layout_marginStart="6dp" />
+                </LinearLayout>
 
                 <!-- Auto Login Toggle -->
                 <RelativeLayout
@@ -298,7 +321,7 @@
             android:id="@+id/tvAppVersion"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ibbWiFi Giriş v1.3.3"
+            android:text="ibbWiFi Giriş v1.3.4"
             android:textAlignment="center"
             android:gravity="center"
             android:textSize="12sp"
