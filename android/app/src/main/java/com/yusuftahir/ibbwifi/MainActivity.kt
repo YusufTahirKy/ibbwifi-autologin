@@ -231,6 +231,41 @@ class MainActivity : AppCompatActivity() {
                 }
             }
         }
+
+        // Run Full Network Diagnostics
+        binding.btnRunDiagnostics.setOnClickListener {
+            val selected = accounts.firstOrNull { it.isSelected }
+            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
+            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
+            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
+
+            binding.btnRunDiagnostics.isEnabled = false
+            binding.btnRunDiagnostics.text = "⏳ Ağ Analiz Ediliyor (Lütfen Bekleyin)..."
+            binding.llDiagResults.visibility = View.VISIBLE
+            binding.tvDiagOutput.text = "Analiz başlatıldı, portlar, DNS ve ağ geçidi test ediliyor...\n"
+            setStatusText("Ağ tanılama testi çalışıyor...", StatusType.PROGRESS)
+
+            lifecycleScope.launch {
+                val report = NetworkDiagnostics.runFullDiagnostic(this@MainActivity, phone, pass)
+                binding.tvDiagOutput.text = report
+                binding.btnRunDiagnostics.isEnabled = true
+                binding.btnRunDiagnostics.text = "🔄 Testi Tekrar Çalıştır"
+                setStatusText("Ağ analizi tamamlandı. Raporu kopyalayabilirsiniz.", StatusType.SUCCESS)
+                Toast.makeText(this@MainActivity, "Analiz tamamlandı! 'Raporu Kopyala' butonuna basabilirsiniz.", Toast.LENGTH_LONG).show()
+            }
+        }
+
+        // Copy Diagnostic Report to Clipboard
+        binding.btnCopyDiagReport.setOnClickListener {
+            val reportText = binding.tvDiagOutput.text.toString()
+            if (reportText.isNotBlank()) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("IBB Diag Report", reportText)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "📋 Rapor panoya kopyalandı! Buraya yapıştırabilirsiniz.", Toast.LENGTH_LONG).show()
+            }
+        }
     }
 
     override fun onResume() {
