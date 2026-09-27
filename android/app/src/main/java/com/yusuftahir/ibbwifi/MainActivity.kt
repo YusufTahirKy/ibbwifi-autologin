@@ -17,6 +17,7 @@ import android.webkit.SslErrorHandler
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
@@ -30,7 +31,10 @@ import androidx.core.content.ContextCompat
 import androidx.lifecycle.lifecycleScope
 import com.google.android.material.card.MaterialCardView
 import com.yusuftahir.ibbwifi.databinding.ActivityMainBinding
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import okhttp3.Request
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.UUID
@@ -159,7 +163,7 @@ class MainActivity : AppCompatActivity() {
                 val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 val clip = android.content.ClipData.newPlainText("IBB Pass", pass)
                 clipboard.setPrimaryClip(clip)
-                Toast.makeText(this, "Şifreniz panoya kopyalandı! Tarayıcıda yapıştırabilirsiniz.", Toast.LENGTH_LONG).show()
+                Toast.makeText(this, "Şifreniz panoya kopyalandı! Chrome'da sağ üstteki 3 noktadan 'Masaüstü sitesi'ni seçip yapıştırabilirsiniz.", Toast.LENGTH_LONG).show()
             }
 
             try {
@@ -209,7 +213,7 @@ class MainActivity : AppCompatActivity() {
             lifecycleScope.launch {
                 binding.btnQuickApiConnect.isEnabled = false
                 binding.btnConnectNow.isEnabled = false
-                setStatusText("Hızlı API ile portala bağlanılıyor...", StatusType.PROGRESS)
+                setStatusText("Masaüstü kimliğiyle doğrudan portala bağlanılıyor...", StatusType.PROGRESS)
 
                 val result = IbbLoginEngine.login(this@MainActivity, phone, pass) { msg ->
                     runOnUiThread { setStatusText(msg, StatusType.PROGRESS) }
@@ -247,7 +251,6 @@ class MainActivity : AppCompatActivity() {
 
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun startDesktopWebViewLogin(phone: String, pass: String) {
-        // Crucial: Bind process to Wi-Fi network so DNS and sockets route through ibbWiFi
         val wifiNetwork = IbbLoginEngine.getWifiNetwork(this)
         if (wifiNetwork == null) {
             setStatusText("Telefonunuz ibbWiFi ağına bağlı görünmüyor. Lütfen önce Wi-Fi'yi açıp ibbWiFi ağına bağlanın.", StatusType.ERROR)
@@ -259,7 +262,7 @@ class MainActivity : AppCompatActivity() {
         binding.pbWebLoading.visibility = View.VISIBLE
         binding.btnConnectNow.isEnabled = false
         binding.btnQuickApiConnect.isEnabled = false
-        setStatusText("Masaüstü modunda portala bağlanılıyor (192.168.1.1)...", StatusType.PROGRESS)
+        setStatusText("Masaüstü portal aranıyor...", StatusType.PROGRESS)
 
         val webView = binding.webViewPortal
         val settings = webView.settings
@@ -272,8 +275,12 @@ class MainActivity : AppCompatActivity() {
         settings.cacheMode = WebSettings.LOAD_NO_CACHE
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
-        // Chrome Windows Desktop User-Agent
-        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+        settings.setSupportZoom(true)
+        settings.builtInZoomControls = true
+        settings.displayZoomControls = false
+
+        // Standard Linux Desktop Chrome User-Agent
+        settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
@@ -282,8 +289,9 @@ class MainActivity : AppCompatActivity() {
         webView.removeJavascriptInterface("AndroidApp")
         webView.addJavascriptInterface(WebAppInterface(this), "AndroidApp")
 
+        val client = IbbLoginEngine.createClient(wifiNetwork)
+
         var hasPageError = false
-        var fallbackAttempted = false
 
         webView.webChromeClient = object : WebChromeClient() {
             override fun onProgressChanged(view: WebView?, newProgress: Int) {
@@ -297,8 +305,35 @@ class MainActivity : AppCompatActivity() {
 
         webView.webViewClient = object : WebViewClient() {
             override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
-                // Crucial for captive portals: proceed through captive portal SSL cert warnings so 'Webpage not available' is avoided
+                // Crucial for captive portals: proceed through captive portal SSL cert warnings
                 handler?.proceed()
+            }
+
+            override fun shouldInterceptRequest(view: WebView?, request: WebResourceRequest?): WebResourceResponse? {
+                val url = request?.url ?: return null
+                val host = url.host.orEmpty()
+
+                // Intercept ibbwifi.istanbul domain if method is GET to guarantee zero-latency resolution via CaptiveDns
+                if (request.method.equals("GET", ignoreCase = true) &&
+                    (host.contains("ibbwifi.istanbul", ignoreCase = true) || host == "10.18.53.200")) {
+                    try {
+                        val okReq = Request.Builder()
+                            .url(url.toString())
+                            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                            .header("Accept", "*/*")
+                            .build()
+                        val res = client.newCall(okReq).execute()
+                        val ct = res.header("Content-Type") ?: "text/html; charset=utf-8"
+                        val mime = ct.substringBefore(";").trim()
+                        val enc = if (ct.contains("charset=")) ct.substringAfter("charset=").trim() else "utf-8"
+                        val headers = mutableMapOf<String, String>()
+                        for (i in 0 until res.headers.size) {
+                            headers[res.headers.name(i)] = res.headers.value(i)
+                        }
+                        return WebResourceResponse(mime, enc, res.code, res.message.ifBlank { "OK" }, headers, res.body?.byteStream())
+                    } catch (ignored: Exception) {}
+                }
+                return null
             }
 
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
@@ -306,7 +341,7 @@ class MainActivity : AppCompatActivity() {
                 binding.pbWebLoading.visibility = View.VISIBLE
                 val display = url?.take(40).orEmpty()
                 binding.tvWebTitle.text = "🌐 $display"
-                setStatusText("Portala bağlanılıyor: $display...", StatusType.PROGRESS)
+                setStatusText("Masaüstü portala bağlanılıyor: $display...", StatusType.PROGRESS)
             }
 
             override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
@@ -314,18 +349,7 @@ class MainActivity : AppCompatActivity() {
                     hasPageError = true
                     val errDesc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.description?.toString().orEmpty() else "Ağ Hatası"
                     val failedUrl = request.url?.toString().orEmpty()
-
-                    // If 192.168.1.1 is unreachable on this hotspot, trigger standard captive probe
-                    if (!fallbackAttempted && (failedUrl.contains("192.168.1.1") || failedUrl.contains("httpvshttps"))) {
-                        fallbackAttempted = true
-                        setStatusText("192.168.1.1 yanıt vermedi, captive ağ geçidi tetikleniyor...", StatusType.PROGRESS)
-                        view?.post {
-                            view.loadUrl("http://connectivitycheck.gstatic.com/generate_204")
-                        }
-                        return
-                    }
-
-                    setStatusText("Tarayıcı hatası: $errDesc (Mobil verinin kapalı ve ibbWiFi'a bağlı olduğunuzdan emin olun)", StatusType.ERROR)
+                    setStatusText("Tarayıcı uyarısı: $errDesc ($failedUrl)", StatusType.ERROR)
                     binding.btnConnectNow.isEnabled = true
                     binding.btnQuickApiConnect.isEnabled = true
                 }
@@ -346,12 +370,30 @@ class MainActivity : AppCompatActivity() {
                     return
                 }
 
-                // Inject continuous auto-pilot JavaScript
+                // Inject Desktop Viewport meta tag (1280px) and auto-pilot JavaScript
                 val cleanPhone = phone.replace("'", "\\'").trim()
                 val cleanPass = pass.replace("'", "\\'").trim()
 
                 val js = """
                     (function() {
+                        // Force Desktop Viewport (1280px width)
+                        try {
+                            var meta = document.querySelector('meta[name="viewport"]');
+                            if (meta) {
+                                meta.setAttribute('content', 'width=1280, initial-scale=0.5, user-scalable=yes');
+                            } else {
+                                var m = document.createElement('meta');
+                                m.name = 'viewport';
+                                m.content = 'width=1280, initial-scale=0.5, user-scalable=yes';
+                                document.head.appendChild(m);
+                            }
+                            if (navigator.userAgentData) {
+                                Object.defineProperty(navigator, 'userAgentData', {
+                                    get: function() { return { brands: [{brand: 'Google Chrome', version: '120'}], mobile: false, platform: 'Linux' }; }
+                                });
+                            }
+                        } catch(e) {}
+
                         if (window.__ibbAutoPilotActive) return;
                         window.__ibbAutoPilotActive = true;
 
@@ -435,7 +477,13 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        webView.loadUrl("http://192.168.1.1")
+        lifecycleScope.launch {
+            val portalUrl = withContext(Dispatchers.IO) {
+                IbbLoginEngine.detectPortalUrl(client)
+            }
+            setStatusText("Masaüstü portal sayfası açılıyor...", StatusType.PROGRESS)
+            webView.loadUrl(portalUrl)
+        }
     }
 
     private fun loadAccountsFromPrefs() {

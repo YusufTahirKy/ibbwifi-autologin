@@ -103,7 +103,7 @@ object IbbLoginEngine {
         }
     }
 
-    private fun createClient(wifiNetwork: Network?): OkHttpClient {
+    fun createClient(wifiNetwork: Network?): OkHttpClient {
         val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
         return OkHttpClient.Builder()
@@ -162,9 +162,10 @@ object IbbLoginEngine {
         return if (matcher.find()) matcher.group(1) else null
     }
 
-    private fun detectPortalUrl(client: OkHttpClient): String {
+    fun detectPortalUrl(client: OkHttpClient): String {
         val probeUrls = listOf(
             "http://192.168.1.1",
+            "http://neverssl.com",
             CHECK_URL
         )
         for (url in probeUrls) {
@@ -172,8 +173,11 @@ object IbbLoginEngine {
                 val req = Request.Builder().url(url).build()
                 client.newCall(req).execute().use { res ->
                     val loc = res.header("Location")
-                    if (loc != null && (loc.contains("ibbwifi") || loc.contains("viracaptive"))) {
-                        return loc
+                    if (loc != null) {
+                        val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
+                        if (resolved.contains("ibbwifi") || resolved.contains("viracaptive") || resolved.contains("mac=")) {
+                            return resolved
+                        }
                     }
                 }
             } catch (ignored: Exception) {}
