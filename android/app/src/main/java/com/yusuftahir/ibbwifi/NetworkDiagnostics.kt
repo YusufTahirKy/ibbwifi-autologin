@@ -161,7 +161,7 @@ object NetworkDiagnostics {
         log("\n[6] İBB PORTAL SAYFASI İNCELEMESİ:")
         val captiveClient = IbbLoginEngine.createClient(wifiNet)
         try {
-            val detectedUrl = IbbLoginEngine.detectPortalUrl(captiveClient)
+            val detectedUrl = IbbLoginEngine.detectPortalUrl(context, captiveClient, wifiNet)
             log("• Tespit Edilen Portal URL: $detectedUrl")
 
             val req = Request.Builder().url(detectedUrl).build()

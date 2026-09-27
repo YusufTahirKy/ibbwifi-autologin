@@ -153,6 +153,8 @@ object IbbLoginEngine {
         }
     }
 
+    fun detectPortalUrl(client: OkHttpClient): String = "$PORTAL_URL/"
+
     fun detectPortalUrl(context: Context, client: OkHttpClient, wifiNetwork: Network?): String {
         val gwIp = getGatewayIp(context)
         val probeUrls = mutableListOf<String>()
