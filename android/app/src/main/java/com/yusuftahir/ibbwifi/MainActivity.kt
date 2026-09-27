@@ -7,12 +7,14 @@ import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import android.view.LayoutInflater
 import android.view.View
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -85,7 +87,7 @@ class MainActivity : AppCompatActivity() {
                     } else {
                         startService(serviceIntent)
                     }
-                    setStatusText("Otomatik giriş AÇIK (Ağ bekleniyor)", StatusType.INFO)
+                    setStatusText("Otomatik giriş AÇIK (Gece 00:00-08:00 Canlı Tutucu devrede)", StatusType.INFO)
                 } catch (e: Exception) {
                     setStatusText("Servis başlatılamadı: ${e.message}", StatusType.ERROR)
                 }
@@ -114,7 +116,15 @@ class MainActivity : AppCompatActivity() {
 
             lifecycleScope.launch {
                 binding.btnConnectNow.isEnabled = false
-                setStatusText("Portala bağlanılıyor...", StatusType.PROGRESS)
+                setStatusText("Ağ kontrol ediliyor...", StatusType.PROGRESS)
+
+                val wifiNetwork = IbbLoginEngine.getWifiNetwork(this@MainActivity)
+                if (wifiNetwork != null && IbbLoginEngine.isNetworkOnline(this@MainActivity, wifiNetwork)) {
+                    setStatusText("🟢 ibbWiFi ağına bağlısınız ve internetiniz zaten aktif! 🎉", StatusType.SUCCESS)
+                    Toast.makeText(this@MainActivity, "🎉 Zaten internete bağlısınız!", Toast.LENGTH_SHORT).show()
+                    binding.btnConnectNow.isEnabled = true
+                    return@launch
+                }
 
                 val result = IbbLoginEngine.login(this@MainActivity, phone, pass) { msg ->
                     runOnUiThread { setStatusText(msg, StatusType.PROGRESS) }
@@ -126,16 +136,83 @@ class MainActivity : AppCompatActivity() {
                     setStatusText(msg, StatusType.SUCCESS)
                     Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                 }.onFailure { err ->
-                    setStatusText("Giriş Başarısız: ${err.message}", StatusType.ERROR)
-                    Toast.makeText(this@MainActivity, "Giriş başarısız: ${err.message}", Toast.LENGTH_LONG).show()
+                    val errMsg = err.message.orEmpty()
+                    setStatusText("Giriş Başarısız: $errMsg", StatusType.ERROR)
+                    if (errMsg.contains("Kilit") || errMsg.contains("Zaman Aşımı") || errMsg.contains("bekleyin")) {
+                        showMacChangeDialog()
+                    } else {
+                        Toast.makeText(this@MainActivity, "Giriş başarısız: $errMsg", Toast.LENGTH_LONG).show()
+                    }
                 }
             }
+        }
+
+        // MAC Reset Shortcut Button
+        binding.btnChangeMac.setOnClickListener {
+            showMacChangeDialog()
         }
     }
 
     override fun onResume() {
         super.onResume()
         checkMobileDataWarning()
+        checkNetworkStatus()
+    }
+
+    private fun checkNetworkStatus() {
+        val wifiNetwork = IbbLoginEngine.getWifiNetwork(this)
+        if (wifiNetwork == null) {
+            setStatusText("Wi-Fi kapalı veya bağlı değil. Lütfen önce ibbWiFi ağına bağlanın.", StatusType.NEUTRAL)
+            return
+        }
+
+        if (IbbLoginEngine.isNetworkOnline(this, wifiNetwork)) {
+            setStatusText("🟢 ibbWiFi ağına bağlısınız ve internetiniz aktif! 🎉", StatusType.SUCCESS)
+            return
+        }
+
+        // Query portal in background to check if quarantined or ready to login
+        lifecycleScope.launch {
+            val status = IbbLoginEngine.quickCheckStatus(this@MainActivity, wifiNetwork)
+            when (status) {
+                IbbLoginEngine.PortalStatus.ALREADY_CONNECTED -> {
+                    setStatusText("🟢 ibbWiFi ağına bağlısınız ve internetiniz aktif! 🎉", StatusType.SUCCESS)
+                }
+                IbbLoginEngine.PortalStatus.READY_TO_LOGIN -> {
+                    setStatusText("🟡 ibbWiFi ağına bağlısınız. Giriş yapmak için '⚡ Tek Tuşla Bağlan'a basın.", StatusType.INFO)
+                }
+                IbbLoginEngine.PortalStatus.QUARANTINED -> {
+                    setStatusText("⚠️ İBB Oturum Zaman Aşımı (Kilit): Lütfen '⚙️ MAC Değiştir' butonuna basarak MAC tipini değiştirin.", StatusType.ERROR)
+                }
+                IbbLoginEngine.PortalStatus.NO_WIFI -> {
+                    setStatusText("Wi-Fi kapalı veya bağlı değil.", StatusType.NEUTRAL)
+                }
+                IbbLoginEngine.PortalStatus.UNKNOWN -> {
+                    setStatusText("Hazır. Bir hesap seçip '⚡ Tek Tuşla Bağlan' butonuna basın.", StatusType.NEUTRAL)
+                }
+            }
+        }
+    }
+
+    private fun showMacChangeDialog() {
+        AlertDialog.Builder(this)
+            .setTitle("⚙️ MAC Değiştirme (Kilit Sıfırlama)")
+            .setMessage(
+                "İBB Wi-Fi '5-10 dakika bekleyin' uyarısı verdiğinde veya sabah kilitlendiğinde:\n\n" +
+                "1. Açılacak ekranda 'ibbWiFi' yanındaki ⚙️ Çark simgesine dokunun.\n" +
+                "2. 'Gelişmiş' bölümünden 'MAC Adresi Tipi'ni değiştirin (Rastgele MAC ⇄ Telefon MAC).\n\n" +
+                "Bu işlem cihaz kimliğini anında yeniler ve bekleme süresini 1 saniyede sıfırlar!"
+            )
+            .setPositiveButton("Wi-Fi Ayarlarını Aç") { _, _ ->
+                try {
+                    val intent = Intent(Settings.ACTION_WIFI_SETTINGS)
+                    startActivity(intent)
+                } catch (e: Exception) {
+                    startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }
+            .setNegativeButton("Kapat", null)
+            .show()
     }
 
     private fun checkMobileDataWarning() {

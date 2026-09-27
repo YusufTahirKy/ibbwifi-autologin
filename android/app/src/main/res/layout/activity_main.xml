@@ -198,6 +198,21 @@
                     android:textColor="#FFFFFF"
                     android:backgroundTint="@color/accent"
                     app:cornerRadius="12dp"
+                    android:layout_marginBottom="10dp" />
+
+                <!-- MAC Reset / Wi-Fi Settings Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnChangeMac"
+                    android:layout_width="match_parent"
+                    android:layout_height="44dp"
+                    android:text="⚙️ MAC Değiştir / Kilidi Sıfırla"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary"
+                    app:strokeColor="@color/primary"
+                    app:strokeWidth="1dp"
+                    android:backgroundTint="@color/input_bg"
+                    app:cornerRadius="10dp"
                     android:layout_marginBottom="16dp" />
 
                 <!-- Auto Login Toggle -->

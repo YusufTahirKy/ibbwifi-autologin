@@ -17,7 +17,10 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import java.util.Calendar
 
 class IbbBackgroundService : Service() {
 
@@ -33,6 +36,7 @@ class IbbBackgroundService : Service() {
             startForeground(1001, notification)
         }
         registerNetworkListener()
+        startNightKeepAliveLoop()
     }
 
     private fun registerNetworkListener() {
@@ -60,6 +64,40 @@ class IbbBackgroundService : Service() {
         }
 
         cm.registerNetworkCallback(request, networkCallback!!)
+    }
+
+    /**
+     * Gece 00:00 - 08:00 Arası Canlı Tutucu & Oturum Kurtarıcı:
+     * - Her 5 dakikada bir kontrol eder.
+     * - Eğer İBB oturumu düşmüşse, telefonun saatlerce askıda kalıp karantinaya düşmesini engellemek için anında tekrar giriş yapar.
+     * - Eğer internet açıksa ve gece saatlerindeyse (00:00 - 08:00), dağıtıcıya ufak bir sinyal göndererek bağlantının boşta kalmasını (idle timeout) önler.
+     */
+    private fun startNightKeepAliveLoop() {
+        serviceScope.launch(Dispatchers.IO) {
+            while (isActive) {
+                try {
+                    delay(5 * 60 * 1000L) // 5 dakika
+
+                    val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
+                    val isEnabled = prefs.getBoolean("auto_login_enabled", false)
+                    if (!isEnabled) continue
+
+                    val wifiNetwork = IbbLoginEngine.getWifiNetwork(applicationContext) ?: continue
+
+                    val isOnline = IbbLoginEngine.isNetworkOnline(applicationContext, wifiNetwork)
+                    val hour = Calendar.getInstance().get(Calendar.HOUR_OF_DAY)
+                    val isNightTime = (hour in 0..7) // 00:00 - 08:00 arası
+
+                    if (!isOnline) {
+                        // Gece oturum düşmüşse derhal yeniden bağlanarak karantinayı önle
+                        attemptAutoLogin()
+                    } else if (isNightTime) {
+                        // Gece canlılık sinyali gönder
+                        IbbLoginEngine.sendKeepAlivePing(wifiNetwork)
+                    }
+                } catch (ignored: Exception) {}
+            }
+        }
     }
 
     private fun attemptAutoLogin() {
