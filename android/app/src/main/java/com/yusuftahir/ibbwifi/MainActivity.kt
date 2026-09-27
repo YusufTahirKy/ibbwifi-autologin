@@ -57,8 +57,19 @@ class MainActivity : AppCompatActivity() {
         // Load saved accounts
         loadAccountsFromPrefs()
 
-        // Set initial toggle state
-        binding.switchAutoLogin.isChecked = prefs.getBoolean("auto_login_enabled", false)
+        // Set initial toggle state & ensure service is running if enabled
+        val isAutoEnabled = prefs.getBoolean("auto_login_enabled", false)
+        binding.switchAutoLogin.isChecked = isAutoEnabled
+        if (isAutoEnabled) {
+            try {
+                val serviceIntent = Intent(this, IbbBackgroundService::class.java)
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(serviceIntent)
+                } else {
+                    startService(serviceIntent)
+                }
+            } catch (ignored: Exception) {}
+        }
 
         // Save Button: adds new credential record
         binding.btnSave.setOnClickListener {
@@ -78,6 +89,7 @@ class MainActivity : AppCompatActivity() {
         // Auto-login Switch (AÇ / KAPA)
         binding.switchAutoLogin.setOnCheckedChangeListener { _, isChecked ->
             prefs.edit().putBoolean("auto_login_enabled", isChecked).apply()
+            saveAccountsToPrefs()
 
             val serviceIntent = Intent(this, IbbBackgroundService::class.java)
             if (isChecked) {
@@ -281,7 +293,7 @@ class MainActivity : AppCompatActivity() {
         prefs.edit().putString("saved_accounts_json", array.toString()).apply()
 
         // Also sync active account to legacy keys for background service
-        val selected = accounts.firstOrNull { it.isSelected }
+        val selected = accounts.firstOrNull { it.isSelected } ?: accounts.firstOrNull()
         if (selected != null) {
             prefs.edit()
                 .putString("phone", selected.phone)

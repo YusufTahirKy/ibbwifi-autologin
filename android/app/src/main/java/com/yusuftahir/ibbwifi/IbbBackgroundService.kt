@@ -20,12 +20,15 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import org.json.JSONArray
 import java.util.Calendar
+import java.util.concurrent.atomic.AtomicBoolean
 
 class IbbBackgroundService : Service() {
 
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
     private var networkCallback: ConnectivityManager.NetworkCallback? = null
+    private val isLoggingIn = AtomicBoolean(false)
 
     override fun onCreate() {
         super.onCreate()
@@ -39,6 +42,12 @@ class IbbBackgroundService : Service() {
         startNightKeepAliveLoop()
     }
 
+    override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        // Trigger auto login check immediately when service starts/restarts
+        attemptAutoLogin("Servis Başlatıldı")
+        return START_STICKY
+    }
+
     private fun registerNetworkListener() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val request = NetworkRequest.Builder()
@@ -50,7 +59,7 @@ class IbbBackgroundService : Service() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     try { cm.bindProcessToNetwork(network) } catch (ignored: Exception) {}
                 }
-                attemptAutoLogin()
+                attemptAutoLogin("Wi-Fi Bağlandı")
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -58,7 +67,7 @@ class IbbBackgroundService : Service() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         try { cm.bindProcessToNetwork(network) } catch (ignored: Exception) {}
                     }
-                    attemptAutoLogin()
+                    attemptAutoLogin("Captive Portal Algılandı")
                 }
             }
         }
@@ -90,7 +99,7 @@ class IbbBackgroundService : Service() {
 
                     if (!isOnline) {
                         // Gece oturum düşmüşse derhal yeniden bağlanarak karantinayı önle
-                        attemptAutoLogin()
+                        attemptAutoLogin("Gece Canlı Tutucu")
                     } else if (isNightTime) {
                         // Gece canlılık sinyali gönder
                         IbbLoginEngine.sendKeepAlivePing(wifiNetwork)
@@ -100,18 +109,86 @@ class IbbBackgroundService : Service() {
         }
     }
 
-    private fun attemptAutoLogin() {
+    private fun getSelectedCredentials(): Pair<String, String>? {
+        val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
+        val jsonStr = prefs.getString("saved_accounts_json", null)
+        if (!jsonStr.isNullOrBlank()) {
+            try {
+                val array = JSONArray(jsonStr)
+                var fallback: Pair<String, String>? = null
+                for (i in 0 until array.length()) {
+                    val obj = array.getJSONObject(i)
+                    val p = obj.optString("phone", "").trim()
+                    val pass = obj.optString("pass", "").trim()
+                    if (p.isNotBlank() && pass.isNotBlank()) {
+                        if (fallback == null) fallback = Pair(p, pass)
+                        if (obj.optBoolean("isSelected", false)) {
+                            return Pair(p, pass)
+                        }
+                    }
+                }
+                if (fallback != null) return fallback
+            } catch (ignored: Exception) {}
+        }
+        val legacyPhone = prefs.getString("phone", "")?.trim().orEmpty()
+        val legacyPass = prefs.getString("password", "")?.trim().orEmpty()
+        if (legacyPhone.isNotBlank() && legacyPass.isNotBlank()) {
+            return Pair(legacyPhone, legacyPass)
+        }
+        return null
+    }
+
+    private fun attemptAutoLogin(source: String = "Otomatik") {
         val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
         val isEnabled = prefs.getBoolean("auto_login_enabled", false)
         if (!isEnabled) return
 
-        val phone = prefs.getString("phone", "").orEmpty()
-        val password = prefs.getString("password", "").orEmpty()
-        if (phone.isBlank() || password.isBlank()) return
+        val creds = getSelectedCredentials() ?: return
+        val (phone, password) = creds
 
-        serviceScope.launch {
-            IbbLoginEngine.login(applicationContext, phone, password) { status ->
-                updateNotification(status)
+        // Concurrency guard: avoid launching concurrent login attempts
+        if (!isLoggingIn.compareAndSet(false, true)) {
+            return
+        }
+
+        serviceScope.launch(Dispatchers.IO) {
+            try {
+                // Settle delay: give DHCP lease and routing 1.8 seconds to establish
+                delay(1800L)
+
+                val wifiNetwork = IbbLoginEngine.getWifiNetwork(applicationContext) ?: run {
+                    updateNotification("İBB Wi-Fi dinleniyor...")
+                    return@launch
+                }
+
+                if (IbbLoginEngine.isNetworkOnline(applicationContext, wifiNetwork)) {
+                    updateNotification("🟢 İBB Wi-Fi bağlı ve internet aktif!")
+                    return@launch
+                }
+
+                updateNotification("İBB Wi-Fi algılandı, otomatik bağlanılıyor...")
+
+                // Retry loop: up to 3 attempts with 2s delay
+                for (attempt in 1..3) {
+                    val result = IbbLoginEngine.login(applicationContext, phone, password) { status ->
+                        updateNotification(status)
+                    }
+
+                    if (result.isSuccess) {
+                        updateNotification("🎉 İBB Wi-Fi Girişi Başarılı! İnternet aktif.")
+                        return@launch
+                    }
+
+                    if (attempt < 3) {
+                        delay(2000L)
+                    }
+                }
+
+                updateNotification("Otomatik giriş tamamlanamadı. Yeniden denenecek.")
+            } catch (e: Exception) {
+                updateNotification("İBB Wi-Fi dinleniyor...")
+            } finally {
+                isLoggingIn.set(false)
             }
         }
     }
