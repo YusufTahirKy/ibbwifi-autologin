@@ -3,7 +3,6 @@ package com.yusuftahir.ibbwifi
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
-import android.graphics.Color
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
@@ -34,7 +33,7 @@ class MainActivity : AppCompatActivity() {
     private val accounts = mutableListOf<SavedAccount>()
 
     override fun onCreate(savedInstanceState: Bundle?) {
-        // Enforce dark mode
+        // Enforce pure dark mode
         AppCompatDelegate.setDefaultNightMode(AppCompatDelegate.MODE_NIGHT_YES)
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
@@ -61,6 +60,7 @@ class MainActivity : AppCompatActivity() {
             val pass = binding.etPassword.text.toString().trim()
 
             if (phone.isBlank() || pass.isBlank()) {
+                setStatusText("Lütfen telefon ve şifre girin.", StatusType.ERROR)
                 Toast.makeText(this, "Lütfen telefon ve şifre girin.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
@@ -93,12 +93,15 @@ class MainActivity : AppCompatActivity() {
 
         // Connect Button (Bağlan)
         binding.btnConnectNow.setOnClickListener {
-            // Use selected account or inputs
+            val typedPhone = binding.etPhone.text.toString().trim()
+            val typedPass = binding.etPassword.text.toString().trim()
+
             val selected = accounts.firstOrNull { it.isSelected }
-            val phone = selected?.phone ?: binding.etPhone.text.toString().trim()
-            val pass = selected?.pass ?: binding.etPassword.text.toString().trim()
+            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
+            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
 
             if (phone.isBlank() || pass.isBlank()) {
+                setStatusText("Hata: Lütfen telefon ve şifre girin veya alttan bir hesap seçin.", StatusType.ERROR)
                 Toast.makeText(this, "Lütfen önce bir hesap seçin veya bilgileri girin.", Toast.LENGTH_SHORT).show()
                 return@setOnClickListener
             }
@@ -107,19 +110,24 @@ class MainActivity : AppCompatActivity() {
             setStatusText("Bağlantı başlatılıyor...", StatusType.PROGRESS)
 
             lifecycleScope.launch {
-                IbbLoginEngine.login(this@MainActivity, phone, pass) { status ->
-                    runOnUiThread {
-                        setStatusText(status, StatusType.PROGRESS)
+                try {
+                    IbbLoginEngine.login(this@MainActivity, phone, pass) { status ->
+                        runOnUiThread {
+                            setStatusText(status, StatusType.PROGRESS)
+                        }
+                    }.onSuccess { msg ->
+                        setStatusText(msg, StatusType.SUCCESS)
+                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                    }.onFailure { err ->
+                        val errorMsg = err.message ?: "Bilinmeyen hata"
+                        setStatusText("Hata! $errorMsg", StatusType.ERROR)
+                        Toast.makeText(this@MainActivity, "Hata: $errorMsg", Toast.LENGTH_LONG).show()
                     }
-                }.onSuccess { msg ->
-                    setStatusText(msg, StatusType.SUCCESS)
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                }.onFailure { err ->
-                    val errorMsg = err.message ?: "Bilinmeyen hata"
-                    setStatusText("Hata! $errorMsg", StatusType.ERROR)
-                    Toast.makeText(this@MainActivity, "Hata: $errorMsg", Toast.LENGTH_LONG).show()
+                } catch (t: Throwable) {
+                    setStatusText("Hata: ${t.message}", StatusType.ERROR)
+                } finally {
+                    binding.btnConnectNow.isEnabled = true
                 }
-                binding.btnConnectNow.isEnabled = true
             }
         }
     }
@@ -208,7 +216,7 @@ class MainActivity : AppCompatActivity() {
 
         binding.etPhone.setText(selectedAccount.phone)
         binding.etPassword.setText(selectedAccount.pass)
-        setStatusText("Seçili Hesap: ${selectedAccount.phone}", StatusType.INFO)
+        setStatusText("Seçili Hesap: ${selectedAccount.phone}. 'Bağlan' butonuna basabilirsiniz.", StatusType.INFO)
     }
 
     private fun deleteAccount(account: SavedAccount) {

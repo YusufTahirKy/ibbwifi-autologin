@@ -28,21 +28,7 @@ object IbbLoginEngine {
 
     class CaptiveDns(private val wifiNetwork: Network?) : Dns {
         override fun lookup(hostname: String): List<InetAddress> {
-            // 1. First attempt: resolve using Wi-Fi interface DNS
-            if (wifiNetwork != null) {
-                try {
-                    val addrs = wifiNetwork.getAllByName(hostname).toList()
-                    if (addrs.isNotEmpty()) return addrs
-                } catch (ignored: Exception) {}
-            }
-
-            // 2. Second attempt: system DNS
-            try {
-                val addrs = Dns.SYSTEM.lookup(hostname)
-                if (addrs.isNotEmpty()) return addrs
-            } catch (ignored: Exception) {}
-
-            // 3. Fallback for IBB internal domains if Android Private DNS caused NXDOMAIN
+            // Immediate zero-latency mapping for IBB internal infrastructure
             if (hostname.equals("viracaptive.ibbwifi.istanbul", ignoreCase = true)) {
                 return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 200.toByte())))
             }
@@ -50,7 +36,24 @@ object IbbLoginEngine {
                 return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 102.toByte())))
             }
 
-            throw UnknownHostException("Unable to resolve host \"$hostname\"")
+            // For other domains, try Wi-Fi interface DNS first
+            if (wifiNetwork != null) {
+                try {
+                    val addrs = wifiNetwork.getAllByName(hostname).toList()
+                    if (addrs.isNotEmpty()) return addrs
+                } catch (ignored: Exception) {}
+            }
+
+            // Fallback to system DNS
+            try {
+                return Dns.SYSTEM.lookup(hostname)
+            } catch (e: Exception) {
+                // If it contains ibbwifi fallback to portal IP
+                if (hostname.contains("ibbwifi", ignoreCase = true)) {
+                    return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 200.toByte())))
+                }
+                throw UnknownHostException("Adres çözülemedi: $hostname")
+            }
         }
     }
 
@@ -85,10 +88,11 @@ object IbbLoginEngine {
     private fun createClient(wifiNetwork: Network?): OkHttpClient {
         val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
-        val builder = OkHttpClient.Builder()
-            .connectTimeout(15, TimeUnit.SECONDS)
-            .readTimeout(15, TimeUnit.SECONDS)
+        return OkHttpClient.Builder()
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(12, TimeUnit.SECONDS)
             .followRedirects(true)
+            .followSslRedirects(true)
             .dns(CaptiveDns(wifiNetwork))
             .addInterceptor { chain ->
                 val request = chain.request().newBuilder()
@@ -111,29 +115,7 @@ object IbbLoginEngine {
                     return map.values.toList()
                 }
             })
-
-        if (wifiNetwork != null) {
-            try {
-                builder.socketFactory(wifiNetwork.socketFactory)
-            } catch (ignored: Exception) {}
-        }
-
-        return builder.build()
-    }
-
-    suspend fun isAlreadyConnected(client: OkHttpClient): Boolean = withContext(Dispatchers.IO) {
-        try {
-            val checkClient = client.newBuilder()
-                .connectTimeout(4, TimeUnit.SECONDS)
-                .followRedirects(false)
-                .build()
-            val request = Request.Builder().url(CHECK_URL).build()
-            checkClient.newCall(request).execute().use { response ->
-                response.code == 204
-            }
-        } catch (e: Exception) {
-            false
-        }
+            .build()
     }
 
     private fun getCsrfToken(html: String): String? {
@@ -142,15 +124,21 @@ object IbbLoginEngine {
     }
 
     private fun detectPortalUrl(client: OkHttpClient): String {
+        val probeClient = client.newBuilder()
+            .connectTimeout(4, TimeUnit.SECONDS)
+            .readTimeout(4, TimeUnit.SECONDS)
+            .build()
+
         val testUrls = listOf(
             CHECK_URL,
             "http://detectportal.firefox.com/canonical.html",
-            "http://clients3.google.com/generate_204"
+            "http://clients3.google.com/generate_204",
+            "http://neverssl.com"
         )
         for (url in testUrls) {
             try {
                 val req = Request.Builder().url(url).build()
-                client.newCall(req).execute().use { res ->
+                probeClient.newCall(req).execute().use { res ->
                     val finalUrl = res.request.url.toString()
                     if (finalUrl.contains("ibbwifi") || finalUrl.contains("viracaptive")) {
                         return finalUrl
@@ -167,7 +155,7 @@ object IbbLoginEngine {
         pass: String,
         onStatus: (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
-        onStatus("Wi-Fi ağına bağlanılıyor...")
+        onStatus("[1/5] Wi-Fi ağı kontrol ediliyor...")
         val wifiNetwork = getWifiNetwork(context)
         if (wifiNetwork == null) {
             return@withContext Result.failure(Exception("Telefonunuz bir Wi-Fi ağına bağlı görünmüyor. Lütfen önce ibbWiFi ağına bağlanın."))
@@ -179,15 +167,10 @@ object IbbLoginEngine {
 
         val client = createClient(wifiNetwork)
 
-        if (isAlreadyConnected(client)) {
-            onStatus("Zaten internete bağlısınız.")
-            return@withContext Result.success("Zaten internete bağlısınız.")
-        }
-
-        onStatus("Portal aranıyor...")
+        onStatus("[2/5] Karşılama portalı aranıyor...")
         val landingUrl = detectPortalUrl(client)
 
-        onStatus("Açılış sayfası yükleniyor...")
+        onStatus("[3/5] Açılış sayfası yükleniyor...")
         val landingReq = Request.Builder()
             .url(landingUrl)
             .build()
@@ -199,9 +182,9 @@ object IbbLoginEngine {
         }
 
         val token1 = getCsrfToken(landingHtml)
-            ?: return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. (Lütfen portal kapsama alanında olduğunuzdan emin olun)"))
+            ?: return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. (ibbWiFi kapsama alanında olduğunuzdan emin olun)"))
 
-        onStatus("Telefon numarası gönderiliyor...")
+        onStatus("[4/5] Telefon numarası gönderiliyor...")
         val phoneJson = JSONObject().apply {
             put("PhoneNumber", phone.trim())
             put("CountryCode", "90")
@@ -230,9 +213,9 @@ object IbbLoginEngine {
         val token2 = getCsrfToken(checkHtml)
             ?: return@withContext Result.failure(Exception("2. güvenlik jetonu alınamadı. Numaranız kayıtlı olmayabilir."))
 
-        kotlinx.coroutines.delay(800)
+        kotlinx.coroutines.delay(600)
 
-        onStatus("Şifre doğrulanıyor...")
+        onStatus("[5/5] Şifre doğrulanıyor...")
         val loginJson = JSONObject().apply {
             put("Password", pass.trim())
         }.toString()
