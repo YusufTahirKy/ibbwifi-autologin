@@ -36,6 +36,12 @@ object IbbLoginEngine {
                 return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 102.toByte())))
             }
 
+            // Connectivity check domains mapped to Google IP so port 80 interception works instantly
+            if (hostname.contains("connectivitycheck.gstatic.com", ignoreCase = true) ||
+                hostname.contains("clients3.google.com", ignoreCase = true)) {
+                return listOf(InetAddress.getByAddress(hostname, byteArrayOf(172.toByte(), 217.toByte(), 18.toByte(), 14.toByte())))
+            }
+
             // For other domains, try Wi-Fi interface DNS first
             if (wifiNetwork != null) {
                 try {
@@ -48,11 +54,8 @@ object IbbLoginEngine {
             try {
                 return Dns.SYSTEM.lookup(hostname)
             } catch (e: Exception) {
-                // If it contains ibbwifi fallback to portal IP
-                if (hostname.contains("ibbwifi", ignoreCase = true)) {
-                    return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 200.toByte())))
-                }
-                throw UnknownHostException("Adres çözülemedi: $hostname")
+                // Return portal IP as safe fallback to avoid crash
+                return listOf(InetAddress.getByAddress(hostname, byteArrayOf(10, 18, 53, 200.toByte())))
             }
         }
     }
@@ -160,6 +163,15 @@ object IbbLoginEngine {
     }
 
     private fun detectPortalUrl(client: OkHttpClient): String {
+        try {
+            val req = Request.Builder().url(CHECK_URL).build()
+            client.newCall(req).execute().use { res ->
+                val loc = res.header("Location")
+                if (loc != null && (loc.contains("ibbwifi") || loc.contains("viracaptive"))) {
+                    return loc
+                }
+            }
+        } catch (ignored: Exception) {}
         return "$PORTAL_URL/"
     }
 
@@ -199,21 +211,21 @@ object IbbLoginEngine {
             return@withContext Result.failure(Exception("Portala bağlanılamadı: ${e.message}"))
         }
 
-        val location = landingRes.header("Location")
-        if (landingRes.code in 300..399 && !location.isNullOrBlank()) {
-            if (!location.contains("ibbwifi.istanbul", ignoreCase = true)) {
-                return@withContext Result.success("🎉 İBB Wi-Fi bağlantınız zaten aktif ve internet açık!")
-            }
-        }
-
         val landingHtml = landingRes.use { it.body?.string().orEmpty() }
+
+        // Check for IBB session timeout / blocked state
+        if (landingHtml.contains("Oturum Bulunamadı", ignoreCase = true) ||
+            landingHtml.contains("session_not_found", ignoreCase = true) ||
+            landingHtml.contains("uzun süre oturum açılmadan", ignoreCase = true)) {
+            return@withContext Result.failure(Exception("⚠️ İBB Oturum Zaman Aşımı: Uzun süre giriş yapılmadığı için İBB bu cihazı kilitledi. Lütfen telefonunuzdan Wi-Fi'yi kapatıp 2-3 dakika bekleyin veya 'Ağı Unut' yapıp tekrar bağlanın."))
+        }
 
         val token1 = getCsrfToken(landingHtml)
             ?: run {
                 if (isConnected(wifiNetwork)) {
                     return@withContext Result.success("🎉 İnternet bağlantınız zaten aktif!")
                 }
-                return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. (ibbWiFi kapsama alanında olduğunuzdan emin olun)"))
+                return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. Lütfen Wi-Fi'yi kapatıp tekrar açın."))
             }
 
         onStatus("[4/5] Telefon numarası gönderiliyor...")
@@ -276,8 +288,14 @@ object IbbLoginEngine {
                 client.newCall(wisprReq).execute().close()
             } catch (ignored: Exception) {}
 
-            onStatus("Giriş başarılı! İnternet aktif.")
-            return@withContext Result.success("Giriş başarılı! İnternet aktif.")
+            kotlinx.coroutines.delay(1200)
+            if (isConnected(wifiNetwork)) {
+                onStatus("🎉 Giriş başarılı! İnternet aktif.")
+                return@withContext Result.success("🎉 Giriş başarılı! İnternet aktif.")
+            } else {
+                onStatus("Giriş yapıldı. Birkaç saniye içinde internetiniz açılacaktır.")
+                return@withContext Result.success("Giriş yapıldı. Birkaç saniye içinde internetiniz açılacaktır.")
+            }
         } else {
             val errMsg = json.optString("message", "Giriş başarısız oldu. Lütfen şifrenizi kontrol edin.")
             return@withContext Result.failure(Exception(errMsg))
