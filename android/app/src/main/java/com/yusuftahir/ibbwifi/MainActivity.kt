@@ -191,6 +191,7 @@ class MainActivity : AppCompatActivity() {
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
+                val v = view ?: return
                 binding.pbWebLoading.visibility = View.GONE
                 val currentUrl = url.orEmpty()
 
@@ -202,7 +203,7 @@ class MainActivity : AppCompatActivity() {
                 }
 
                 // Check for IBB timeout / session error in HTML
-                view?.evaluateJavascript(
+                v.evaluateJavascript(
                     "(function() { return document.body ? document.body.innerText : ''; })();"
                 ) { bodyText ->
                     if (bodyText != null && (bodyText.contains("Oturum Bulunamadı") || bodyText.contains("uzun süre oturum açılmadan"))) {
@@ -240,7 +241,7 @@ class MainActivity : AppCompatActivity() {
                         })();
                     """.trimIndent()
 
-                    view.evaluateJavascript(js, null)
+                    v.evaluateJavascript(js, null)
                     setStatusText("Bilgiler girildi, giriş doğrulanıyor...", StatusType.PROGRESS)
                 }
 
