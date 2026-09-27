@@ -112,7 +112,7 @@
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
-        <!-- Card: Saved Credentials (Altta Kayıtlı Bilgiler) -->
+        <!-- Card: Saved Credentials (Kayıtlı Bilgiler) -->
         <com.google.android.material.card.MaterialCardView
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
@@ -179,7 +179,7 @@
                     android:id="@+id/tvMobileDataWarning"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="⚠️ 4.5G Mobil Veriniz açık! 192.168.1.1 ve İBB portalına bağlanabilmek için lütfen mobil veriyi kapatın."
+                    android:text="⚠️ 4.5G Mobil Veriniz açık! Wi-Fi portalına sorunsuz bağlanabilmek için mobil veriyi kapatmanız önerilir."
                     android:textSize="12sp"
                     android:textColor="#FFA726"
                     android:background="#2E1F00"
@@ -187,48 +187,18 @@
                     android:layout_marginBottom="12dp"
                     android:visibility="gone" />
 
-                <!-- Prominent Connect Button -->
+                <!-- Single Primary Connect Button -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnConnectNow"
                     android:layout_width="match_parent"
-                    android:layout_height="54dp"
-                    android:text="⚡ Tek Tuşla Bağlan (Süper Hızlı)"
-                    android:textSize="15sp"
+                    android:layout_height="56dp"
+                    android:text="⚡ Tek Tuşla Bağlan"
+                    android:textSize="16sp"
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"
                     android:backgroundTint="@color/accent"
-                    app:cornerRadius="10dp"
-                    android:layout_marginBottom="10dp" />
-
-                <!-- Desktop WebView Button -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnQuickApiConnect"
-                    android:layout_width="match_parent"
-                    android:layout_height="46dp"
-                    android:text="🖥️ Masaüstü Tarayıcısı ile Bağlan"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/text_primary"
-                    app:strokeColor="@color/card_stroke"
-                    app:strokeWidth="1dp"
-                    android:backgroundTint="@color/input_bg"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="10dp" />
-
-                <!-- Open in External Browser Button (192.168.1.1) -->
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnOpenBrowser"
-                    android:layout_width="match_parent"
-                    android:layout_height="46dp"
-                    android:text="🌐 Chrome'da Aç (192.168.1.1)"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/primary"
-                    app:strokeColor="@color/primary"
-                    app:strokeWidth="1dp"
-                    android:backgroundTint="@color/input_bg"
-                    app:cornerRadius="8dp"
-                    android:layout_marginBottom="14dp" />
+                    app:cornerRadius="12dp"
+                    android:layout_marginBottom="16dp" />
 
                 <!-- Auto Login Toggle -->
                 <RelativeLayout
@@ -275,7 +245,7 @@
             android:id="@+id/cardStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="14dp"
+            android:layout_marginBottom="24dp"
             app:cardCornerRadius="12dp"
             app:cardElevation="0dp"
             app:strokeWidth="1dp"
@@ -301,177 +271,10 @@
                     android:id="@+id/tvStatus"
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
-                    android:text="Hazır. Bir hesap seçip 'Bağlan' butonuna basın."
+                    android:text="Hazır. Bir hesap seçip '⚡ Tek Tuşla Bağlan' butonuna basın."
                     android:textSize="13sp"
                     android:lineSpacingExtra="3dp"
                     android:textColor="@color/text_primary" />
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- Card: Detaylı Ağ Tanılama (Debug) -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardDiagnostics"
-            android:layout_width="match_parent"
-            android:layout_height="wrap_content"
-            android:layout_marginBottom="14dp"
-            app:cardCornerRadius="14dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="1.5dp"
-            app:strokeColor="@color/accent"
-            app:cardBackgroundColor="@color/card_bg">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="vertical"
-                android:padding="16dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="🔍 Ağ &amp; Bağlantı Tanılama (Debug)"
-                    android:textSize="15sp"
-                    android:textStyle="bold"
-                    android:textColor="@color/accent"
-                    android:layout_marginBottom="6dp" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Tüm ağ parametrelerini, gateway'i, DNS durumunu ve portal yanıtlarını test eder. Tek tuşla kopyalayıp paylaşabilirsiniz."
-                    android:textSize="11sp"
-                    android:textColor="@color/text_secondary"
-                    android:layout_marginBottom="12dp" />
-
-                <com.google.android.material.button.MaterialButton
-                    android:id="@+id/btnRunDiagnostics"
-                    android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:text="🔍 Detaylı Ağ Analizi Yap"
-                    android:textSize="13sp"
-                    android:textStyle="bold"
-                    android:textColor="#FFFFFF"
-                    android:backgroundTint="@color/accent"
-                    app:cornerRadius="8dp" />
-
-                <!-- Results container (visible after running) -->
-                <LinearLayout
-                    android:id="@+id/llDiagResults"
-                    android:layout_width="match_parent"
-                    android:layout_height="wrap_content"
-                    android:orientation="vertical"
-                    android:layout_marginTop="12dp"
-                    android:visibility="gone">
-
-                    <com.google.android.material.button.MaterialButton
-                        android:id="@+id/btnCopyDiagReport"
-                        android:layout_width="match_parent"
-                        android:layout_height="44dp"
-                        android:text="📋 Raporu Kopyala (Bana Göndermek İçin)"
-                        android:textSize="13sp"
-                        android:textStyle="bold"
-                        android:textColor="#000000"
-                        android:backgroundTint="@color/primary"
-                        app:cornerRadius="8dp"
-                        android:layout_marginBottom="10dp" />
-
-                    <HorizontalScrollView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content">
-
-                        <TextView
-                            android:id="@+id/tvDiagOutput"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Test sonuçları bekleniyor..."
-                            android:textSize="11sp"
-                            android:textColor="#A0AEC0"
-                            android:fontFamily="monospace"
-                            android:background="@color/input_bg"
-                            android:padding="12dp"
-                            android:textIsSelectable="true" />
-                    </HorizontalScrollView>
-                </LinearLayout>
-            </LinearLayout>
-        </com.google.android.material.card.MaterialCardView>
-
-        <!-- Card: Dahili Tarayıcı (WebView Desktop Mode) -->
-        <com.google.android.material.card.MaterialCardView
-            android:id="@+id/cardWebView"
-            android:layout_width="match_parent"
-            android:layout_height="380dp"
-            android:layout_marginBottom="24dp"
-            android:visibility="gone"
-            app:cardCornerRadius="12dp"
-            app:cardElevation="0dp"
-            app:strokeWidth="1dp"
-            app:strokeColor="@color/card_stroke"
-            app:cardBackgroundColor="@color/card_bg">
-
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical">
-
-                <RelativeLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="40dp"
-                    android:background="@color/input_bg"
-                    android:paddingStart="12dp"
-                    android:paddingEnd="8dp">
-
-                    <TextView
-                        android:id="@+id/tvWebTitle"
-                        android:layout_width="0dp"
-                        android:layout_height="wrap_content"
-                        android:layout_alignParentStart="true"
-                        android:layout_toStartOf="@id/btnReloadWeb"
-                        android:layout_centerVertical="true"
-                        android:ellipsize="end"
-                        android:singleLine="true"
-                        android:text="🌐 Masaüstü Tarayıcı Görünümü (192.168.1.1)"
-                        android:textSize="12sp"
-                        android:textStyle="bold"
-                        android:textColor="@color/text_primary" />
-
-                    <ImageButton
-                        android:id="@+id/btnReloadWeb"
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:layout_toStartOf="@id/btnCloseWebView"
-                        android:layout_centerVertical="true"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:src="@android:drawable/ic_menu_rotate"
-                        app:tint="@color/text_secondary"
-                        android:contentDescription="Yenile" />
-
-                    <ImageButton
-                        android:id="@+id/btnCloseWebView"
-                        android:layout_width="36dp"
-                        android:layout_height="36dp"
-                        android:layout_alignParentEnd="true"
-                        android:layout_centerVertical="true"
-                        android:background="?attr/selectableItemBackgroundBorderless"
-                        android:src="@android:drawable/ic_menu_close_clear_cancel"
-                        app:tint="@color/text_secondary" />
-                </RelativeLayout>
-
-                <FrameLayout
-                    android:layout_width="match_parent"
-                    android:layout_height="match_parent">
-
-                    <WebView
-                        android:id="@+id/webViewPortal"
-                        android:layout_width="match_parent"
-                        android:layout_height="match_parent" />
-
-                    <ProgressBar
-                        android:id="@+id/pbWebLoading"
-                        android:layout_width="wrap_content"
-                        android:layout_height="wrap_content"
-                        android:layout_gravity="center"
-                        android:visibility="gone" />
-                </FrameLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 
