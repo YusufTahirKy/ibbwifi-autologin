@@ -213,10 +213,10 @@ class IbbBackgroundService : Service() {
                     lastErrorMessage.contains("açma sırasında", ignoreCase = true) ||
                     lastErrorMessage.contains("bekleyin", ignoreCase = true)) {
 
-                    for (cooldownRound in 1..6) {
-                        val waitSec = cooldownRound * 25
+                    for (cooldownRound in 1..7) {
+                        val waitSec = cooldownRound * 20
                         updateNotification("⏳ İBB eski oturumu bırakıyor (~${waitSec} sn)... Bekleniyor.")
-                        delay(25000L)
+                        delay(20000L)
 
                         val currentWifi = IbbLoginEngine.getWifiNetwork(applicationContext) ?: break
                         if (IbbLoginEngine.isNetworkOnline(applicationContext, currentWifi)) {
@@ -224,7 +224,7 @@ class IbbBackgroundService : Service() {
                             return@launch
                         }
 
-                        updateNotification("İBB Wi-Fi tekrar deneniyor ($cooldownRound/6)...")
+                        updateNotification("İBB Wi-Fi tekrar deneniyor ($cooldownRound/7)...")
                         val retryRes = IbbLoginEngine.login(applicationContext, phone, password) { status ->
                             updateNotification(status)
                         }

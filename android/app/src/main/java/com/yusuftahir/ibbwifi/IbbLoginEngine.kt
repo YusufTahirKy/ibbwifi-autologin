@@ -176,23 +176,21 @@ object IbbLoginEngine {
     fun detectPortalUrl(client: OkHttpClient): String = "$PORTAL_URL/"
 
     fun detectPortalUrl(context: Context, client: OkHttpClient, wifiNetwork: Network?): String {
-        val gwIp = getGatewayIp(context)
-        val probeUrls = mutableListOf<String>()
-        if (gwIp != "0.0.0.0" && gwIp.isNotBlank()) {
-            probeUrls.add("http://$gwIp/")
-        }
-        probeUrls.add("http://192.168.1.1/")
-        probeUrls.add("http://1.1.1.1/")
-        probeUrls.add(CHECK_URL)
+        val probeUrls = listOf(
+            CHECK_URL,
+            "http://clients3.google.com/generate_204",
+            "http://detectportal.firefox.com/canonical.html",
+            "http://1.1.1.1/"
+        )
 
         val probeClient = client.newBuilder()
-            .connectTimeout(1500, TimeUnit.MILLISECONDS)
-            .readTimeout(1500, TimeUnit.MILLISECONDS)
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(3, TimeUnit.SECONDS)
             .followRedirects(false)
             .followSslRedirects(false)
             .build()
 
-        // 1. Probe router port 80: router intercepts in 12ms and returns the Location URL containing mac & session!
+        // Probe external HTTP URLs: router intercepts and returns Location with user_mac and session
         for (url in probeUrls) {
             try {
                 val req = Request.Builder()
@@ -213,7 +211,7 @@ object IbbLoginEngine {
             } catch (ignored: Exception) {}
         }
 
-        // 2. Direct portal check as fallback
+        // Direct portal check as fallback
         try {
             val req = Request.Builder().url(PORTAL_URL).build()
             probeClient.newCall(req).execute().use { res ->
@@ -243,10 +241,7 @@ object IbbLoginEngine {
             val req = Request.Builder().url(landingUrl).build()
             client.newCall(req).execute().use { res ->
                 val body = res.body?.string().orEmpty()
-                if (body.contains("Oturum Bulunamadı", ignoreCase = true) ||
-                    body.contains("session_not_found", ignoreCase = true) ||
-                    body.contains("uzun süre oturum açılmadan", ignoreCase = true) ||
-                    body.contains("dakika bekleyin", ignoreCase = true) ||
+                if (body.contains("uzun süre oturum açılmadan", ignoreCase = true) ||
                     body.contains("5-10", ignoreCase = true) ||
                     res.code == 429) {
                     return@withContext PortalStatus.QUARANTINED
@@ -471,13 +466,10 @@ object IbbLoginEngine {
 
             landingHtml = landingRes.use { it.body?.string().orEmpty() }
 
-            // Check for IBB session timeout / blocked state / quarantine
-            if (landingHtml.contains("Oturum Bulunamadı", ignoreCase = true) ||
-                landingHtml.contains("session_not_found", ignoreCase = true) ||
-                landingHtml.contains("uzun süre oturum açılmadan", ignoreCase = true) ||
-                landingHtml.contains("dakika bekleyin", ignoreCase = true) ||
+            // Check for IBB session timeout / blocked state / quarantine (ONLY actual morning quarantine)
+            if (landingHtml.contains("uzun süre oturum açılmadan", ignoreCase = true) ||
                 landingHtml.contains("5-10", ignoreCase = true)) {
-                return@withContext Result.failure(Exception("⚠️ İBB Oturum Zaman Aşımı (Kilit): Uzun süre giriş yapılmadığı için İBB bu cihazı kilitledi. Lütfen '⚙️ MAC Değiştir' butonuna basarak MAC tipini değiştirin veya 5-10 dk bekleyin."))
+                return@withContext Result.failure(Exception("⚠️ İBB Oturum Kilitlendi (Sabah Karantinası): Uzun süre giriş yapılmadığı için İBB bu MAC adresini kilitledi. Lütfen '⚙️ MAC Değiştir' butonuna basarak MAC tipini değiştirin."))
             }
 
             token1 = getCsrfToken(landingHtml)
@@ -543,9 +535,6 @@ object IbbLoginEngine {
 
         val loginJson = JSONObject().apply {
             put("Password", pass.trim())
-            put("Force", true)
-            put("ForceLogin", true)
-            put("TerminatePrevious", true)
         }.toString()
 
         val loginReq = Request.Builder()
@@ -623,7 +612,7 @@ object IbbLoginEngine {
             val finalErrMsg = if (errMsg.contains("Oturum açma", ignoreCase = true) ||
                 errMsg.contains("hata meydana", ignoreCase = true) ||
                 errMsg.contains("açma sırasında", ignoreCase = true)) {
-                "⚠️ Önceki Oturum Henüz Kapanmadı: Eski MAC adresinizin oturumu İBB sisteminde 2-3 dakika açık kalır. Lütfen 2-3 dakika bekleyin (otomatik servis de aralıklarla deneyecektir) veya '🚪 Oturumu Kapat' butonuna basın."
+                "⚠️ Önceki Oturum Henüz Kapanmadı: Eski MAC oturumunuz İBB sunucusunda askıda kalmış. Sunucu 1-2 dakika içinde eski oturumu otomatik düşürecektir. Lütfen biraz bekleyin veya alttaki '🚪 Oturumu Kapat' butonuna basın."
             } else {
                 errMsg
             }
@@ -636,15 +625,26 @@ object IbbLoginEngine {
         val gwIp = getGatewayIp(context)
         val logoutUrls = listOf(
             "$PORTAL_URL/Logout",
-            "$PORTAL_URL/Home/Logout",
             "$PORTAL_URL/Account/Logout",
-            "http://192.168.1.1/logout.html",
-            "http://$gwIp/logout.html"
+            "$PORTAL_URL/Home/Logout",
+            "http://$gwIp/logout.html",
+            "http://1.1.1.1/logout",
+            "http://10.32.0.1/logout.html"
         )
         var anySuccess = false
         for (url in logoutUrls) {
             try {
                 val req = Request.Builder().url(url).build()
+                client.newCall(req).execute().use { res ->
+                    if (res.isSuccessful || res.isRedirect) anySuccess = true
+                }
+            } catch (ignored: Exception) {}
+
+            try {
+                val req = Request.Builder()
+                    .url(url)
+                    .post("".toRequestBody("application/x-www-form-urlencoded".toMediaType()))
+                    .build()
                 client.newCall(req).execute().use { res ->
                     if (res.isSuccessful || res.isRedirect) anySuccess = true
                 }
