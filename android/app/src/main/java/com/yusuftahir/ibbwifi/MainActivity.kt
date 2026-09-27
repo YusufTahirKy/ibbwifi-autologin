@@ -3,22 +3,27 @@ package com.yusuftahir.ibbwifi
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
+import android.net.http.SslError
 import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.View
+import android.webkit.CookieManager
+import android.webkit.JavascriptInterface
+import android.webkit.SslErrorHandler
+import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebSettings
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
-import android.net.ConnectivityManager
-import android.net.NetworkCapabilities
-import android.net.Uri
-import android.webkit.CookieManager
-import android.webkit.WebResourceError
-import android.webkit.WebResourceRequest
-import android.webkit.WebView
-import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -28,8 +33,10 @@ import com.yusuftahir.ibbwifi.databinding.ActivityMainBinding
 import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
+import java.util.UUID
 
 data class SavedAccount(
+    val id: String = UUID.randomUUID().toString(),
     val phone: String,
     val pass: String,
     var isSelected: Boolean = false
@@ -39,6 +46,28 @@ class MainActivity : AppCompatActivity() {
 
     private lateinit var binding: ActivityMainBinding
     private val accounts = mutableListOf<SavedAccount>()
+
+    class WebAppInterface(private val activity: MainActivity) {
+        @JavascriptInterface
+        fun onLoginStatus(status: String, message: String) {
+            activity.runOnUiThread {
+                when (status) {
+                    "PROGRESS" -> activity.setStatusText(message, StatusType.PROGRESS)
+                    "SUCCESS" -> {
+                        activity.setStatusText(message, StatusType.SUCCESS)
+                        activity.binding.btnConnectNow.isEnabled = true
+                        activity.binding.btnQuickApiConnect.isEnabled = true
+                        Toast.makeText(activity, message, Toast.LENGTH_LONG).show()
+                    }
+                    "ERROR" -> {
+                        activity.setStatusText(message, StatusType.ERROR)
+                        activity.binding.btnConnectNow.isEnabled = true
+                        activity.binding.btnQuickApiConnect.isEnabled = true
+                    }
+                }
+            }
+        }
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         // Enforce pure dark mode
@@ -62,7 +91,7 @@ class MainActivity : AppCompatActivity() {
         // Set initial toggle state
         binding.switchAutoLogin.isChecked = prefs.getBoolean("auto_login_enabled", false)
 
-        // Save Button: adds or updates account
+        // Save Button: always creates a new record so same phone with different passwords can be kept
         binding.btnSave.setOnClickListener {
             val phone = binding.etPhone.text?.toString()?.trim().orEmpty()
             val pass = binding.etPassword.text?.toString()?.trim().orEmpty()
@@ -73,8 +102,8 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            saveOrUpdateAccount(phone, pass)
-            Toast.makeText(this, "Bilgiler kaydedildi.", Toast.LENGTH_SHORT).show()
+            saveNewAccount(phone, pass)
+            Toast.makeText(this, "Bilgiler yeni kayıt olarak eklendi.", Toast.LENGTH_SHORT).show()
         }
 
         // Auto-login Switch (AÇ / KAPA)
@@ -102,6 +131,20 @@ class MainActivity : AppCompatActivity() {
         // Close WebView button
         binding.btnCloseWebView.setOnClickListener {
             binding.cardWebView.visibility = View.GONE
+        }
+
+        // Reload WebView button
+        binding.btnReloadWeb.setOnClickListener {
+            val selected = accounts.firstOrNull { it.isSelected }
+            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
+            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
+            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
+            if (phone.isNotBlank() && pass.isNotBlank()) {
+                startDesktopWebViewLogin(phone, pass)
+            } else {
+                binding.webViewPortal.reload()
+            }
         }
 
         // Open in Browser (192.168.1.1)
@@ -142,11 +185,47 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            // Check mobile data
+            checkMobileDataWarning()
+            startDesktopWebViewLogin(phone, pass)
+        }
+
+        // Quick Direct API Connect Button
+        binding.btnQuickApiConnect.setOnClickListener {
+            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
+
+            val selected = accounts.firstOrNull { it.isSelected }
+            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
+            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
+
+            if (phone.isBlank() || pass.isBlank()) {
+                setStatusText("Hata: Lütfen telefon ve şifre girin veya alttan bir hesap seçin.", StatusType.ERROR)
+                Toast.makeText(this, "Lütfen önce bir hesap seçin veya bilgileri girin.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
             checkMobileDataWarning()
 
-            // Run desktop webview auto-login
-            startDesktopWebViewLogin(phone, pass)
+            lifecycleScope.launch {
+                binding.btnQuickApiConnect.isEnabled = false
+                binding.btnConnectNow.isEnabled = false
+                setStatusText("Hızlı API ile portala bağlanılıyor...", StatusType.PROGRESS)
+
+                val result = IbbLoginEngine.login(this@MainActivity, phone, pass) { msg ->
+                    runOnUiThread { setStatusText(msg, StatusType.PROGRESS) }
+                }
+
+                binding.btnQuickApiConnect.isEnabled = true
+                binding.btnConnectNow.isEnabled = true
+
+                result.onSuccess { msg ->
+                    setStatusText(msg, StatusType.SUCCESS)
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                }.onFailure { err ->
+                    setStatusText("Hata: ${err.message}", StatusType.ERROR)
+                    Toast.makeText(this@MainActivity, "Giriş başarısız: ${err.message}", Toast.LENGTH_LONG).show()
+                }
+            }
         }
     }
 
@@ -168,9 +247,18 @@ class MainActivity : AppCompatActivity() {
 
     @android.annotation.SuppressLint("SetJavaScriptEnabled")
     private fun startDesktopWebViewLogin(phone: String, pass: String) {
+        // Crucial: Bind process to Wi-Fi network so DNS and sockets route through ibbWiFi
+        val wifiNetwork = IbbLoginEngine.getWifiNetwork(this)
+        if (wifiNetwork == null) {
+            setStatusText("Telefonunuz ibbWiFi ağına bağlı görünmüyor. Lütfen önce Wi-Fi'yi açıp ibbWiFi ağına bağlanın.", StatusType.ERROR)
+            Toast.makeText(this, "Lütfen önce ibbWiFi ağına bağlanın.", Toast.LENGTH_SHORT).show()
+            return
+        }
+
         binding.cardWebView.visibility = View.VISIBLE
         binding.pbWebLoading.visibility = View.VISIBLE
         binding.btnConnectNow.isEnabled = false
+        binding.btnQuickApiConnect.isEnabled = false
         setStatusText("Masaüstü modunda portala bağlanılıyor (192.168.1.1)...", StatusType.PROGRESS)
 
         val webView = binding.webViewPortal
@@ -178,86 +266,172 @@ class MainActivity : AppCompatActivity() {
         settings.javaScriptEnabled = true
         settings.domStorageEnabled = true
         settings.databaseEnabled = true
-        // Set standard Desktop Linux Chrome User-Agent
-        settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        settings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+        settings.allowContentAccess = true
+        settings.allowFileAccess = true
+        settings.cacheMode = WebSettings.LOAD_NO_CACHE
         settings.useWideViewPort = true
         settings.loadWithOverviewMode = true
+        // Chrome Windows Desktop User-Agent
+        settings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
         val cookieManager = CookieManager.getInstance()
         cookieManager.setAcceptCookie(true)
+        cookieManager.setAcceptThirdPartyCookies(webView, true)
+
+        webView.removeJavascriptInterface("AndroidApp")
+        webView.addJavascriptInterface(WebAppInterface(this), "AndroidApp")
+
+        var hasPageError = false
+        var fallbackAttempted = false
+
+        webView.webChromeClient = object : WebChromeClient() {
+            override fun onProgressChanged(view: WebView?, newProgress: Int) {
+                if (newProgress < 100) {
+                    binding.pbWebLoading.visibility = View.VISIBLE
+                } else {
+                    binding.pbWebLoading.visibility = View.GONE
+                }
+            }
+        }
 
         webView.webViewClient = object : WebViewClient() {
+            override fun onReceivedSslError(view: WebView?, handler: SslErrorHandler?, error: SslError?) {
+                // Crucial for captive portals: proceed through captive portal SSL cert warnings so 'Webpage not available' is avoided
+                handler?.proceed()
+            }
+
             override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                hasPageError = false
                 binding.pbWebLoading.visibility = View.VISIBLE
-                setStatusText("Sayfa açılıyor: ${url?.take(40)}...", StatusType.PROGRESS)
+                val display = url?.take(40).orEmpty()
+                binding.tvWebTitle.text = "🌐 $display"
+                setStatusText("Portala bağlanılıyor: $display...", StatusType.PROGRESS)
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                if (request?.isForMainFrame == true) {
+                    hasPageError = true
+                    val errDesc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.description?.toString().orEmpty() else "Ağ Hatası"
+                    val failedUrl = request.url?.toString().orEmpty()
+
+                    // If 192.168.1.1 is unreachable on this hotspot, trigger standard captive probe
+                    if (!fallbackAttempted && (failedUrl.contains("192.168.1.1") || failedUrl.contains("httpvshttps"))) {
+                        fallbackAttempted = true
+                        setStatusText("192.168.1.1 yanıt vermedi, captive ağ geçidi tetikleniyor...", StatusType.PROGRESS)
+                        view?.post {
+                            view.loadUrl("http://connectivitycheck.gstatic.com/generate_204")
+                        }
+                        return
+                    }
+
+                    setStatusText("Tarayıcı hatası: $errDesc (Mobil verinin kapalı ve ibbWiFi'a bağlı olduğunuzdan emin olun)", StatusType.ERROR)
+                    binding.btnConnectNow.isEnabled = true
+                    binding.btnQuickApiConnect.isEnabled = true
+                }
             }
 
             override fun onPageFinished(view: WebView?, url: String?) {
                 val v = view ?: return
                 binding.pbWebLoading.visibility = View.GONE
                 val currentUrl = url.orEmpty()
+                binding.btnConnectNow.isEnabled = true
+                binding.btnQuickApiConnect.isEnabled = true
 
-                if (currentUrl.contains("generate_204") || currentUrl.contains("google.com")) {
+                if (hasPageError) return
+
+                if (currentUrl.contains("generate_204") || currentUrl.contains("google.com/search") || currentUrl.contains("gstatic.com")) {
                     setStatusText("🎉 Giriş başarılı! İnternet aktif.", StatusType.SUCCESS)
-                    binding.btnConnectNow.isEnabled = true
-                    Toast.makeText(this@MainActivity, "Giriş başarılı! İnternet aktif.", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, "🎉 Giriş başarılı! İnternet aktif.", Toast.LENGTH_SHORT).show()
                     return
                 }
 
-                // Check for IBB timeout / session error in HTML
-                v.evaluateJavascript(
-                    "(function() { return document.body ? document.body.innerText : ''; })();"
-                ) { bodyText ->
-                    if (bodyText != null && (bodyText.contains("Oturum Bulunamadı") || bodyText.contains("uzun süre oturum açılmadan"))) {
-                        setStatusText("⚠️ İBB Oturum Zaman Aşımı: Lütfen Wi-Fi'yi kapatıp 2-3 dakika bekledikten sonra yeniden bağlanın.", StatusType.ERROR)
-                        binding.btnConnectNow.isEnabled = true
-                        return@evaluateJavascript
-                    }
+                // Inject continuous auto-pilot JavaScript
+                val cleanPhone = phone.replace("'", "\\'").trim()
+                val cleanPass = pass.replace("'", "\\'").trim()
 
-                    // Inject auto-fill script for Phone & Password
-                    val js = """
-                        (function() {
-                            var phone = '$phone';
-                            var pass = '$pass';
-                            
+                val js = """
+                    (function() {
+                        if (window.__ibbAutoPilotActive) return;
+                        window.__ibbAutoPilotActive = true;
+
+                        var phoneVal = '$cleanPhone';
+                        var passVal = '$cleanPass';
+                        var attempts = 0;
+
+                        var poll = setInterval(function() {
+                            attempts++;
+                            if (attempts > 50) {
+                                clearInterval(poll);
+                                window.__ibbAutoPilotActive = false;
+                                return;
+                            }
+
+                            var body = document.body ? document.body.innerText : '';
+                            if (body.indexOf('Oturum Bulunamadı') !== -1 || body.indexOf('uzun süre oturum') !== -1) {
+                                clearInterval(poll);
+                                if (window.AndroidApp) {
+                                    window.AndroidApp.onLoginStatus('ERROR', '⚠️ İBB Zaman Aşımı: Lütfen Wi-Fi kapatıp 2 dk bekleyin.');
+                                }
+                                return;
+                            }
+
+                            if (body.indexOf('Giriş Başarılı') !== -1 || body.indexOf('Hoş Geldiniz') !== -1) {
+                                clearInterval(poll);
+                                if (window.AndroidApp) {
+                                    window.AndroidApp.onLoginStatus('SUCCESS', '🎉 Giriş Başarılı! İnternet aktif.');
+                                }
+                                return;
+                            }
+
+                            // 1. Check phone input
                             var phoneInput = document.querySelector('input[type="tel"], input[name*="Phone"], input[id*="Phone"], input[name*="phone"]');
-                            if (phoneInput && !phoneInput.value) {
-                                phoneInput.value = phone;
+                            if (phoneInput && phoneInput.value !== phoneVal) {
+                                phoneInput.focus();
+                                phoneInput.value = phoneVal;
                                 phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
                                 phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-                            
-                            var passInput = document.querySelector('input[type="password"], input[name*="Password"], input[id*="Password"], input[name*="pass"]');
-                            if (passInput && !passInput.value) {
-                                passInput.value = pass;
-                                passInput.dispatchEvent(new Event('input', { bubbles: true }));
-                                passInput.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-
-                            setTimeout(function() {
-                                var submitBtn = document.querySelector('button[type="submit"], input[type="submit"], .btn-primary, #btnLogin, #btnLandingCheck');
-                                if (submitBtn) {
-                                    submitBtn.click();
+                                if (window.AndroidApp) {
+                                    window.AndroidApp.onLoginStatus('PROGRESS', 'Telefon numarası yazıldı...');
                                 }
-                            }, 500);
-                        })();
-                    """.trimIndent()
+                            }
 
-                    v.evaluateJavascript(js, null)
-                    setStatusText("Bilgiler girildi, giriş doğrulanıyor...", StatusType.PROGRESS)
-                }
+                            // 2. Check password visibility
+                            var passInput = document.querySelector('input[type="password"], input[name*="Password"], input[id*="Password"], input[name*="pass"]');
+                            var isPassVisible = passInput && (passInput.offsetWidth > 0 || passInput.offsetHeight > 0 || passInput.getClientRects().length > 0);
 
-                binding.btnConnectNow.isEnabled = true
-            }
+                            if (!isPassVisible) {
+                                var nextBtn = document.querySelector('#btnLandingCheck, button[name*="Landing"], button.btn-primary');
+                                if (nextBtn && !nextBtn.disabled) {
+                                    nextBtn.click();
+                                    if (window.AndroidApp) {
+                                        window.AndroidApp.onLoginStatus('PROGRESS', 'Numara gönderildi, şifre alanı bekleniyor...');
+                                    }
+                                }
+                            } else {
+                                if (passInput.value !== passVal) {
+                                    passInput.focus();
+                                    passInput.value = passVal;
+                                    passInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                    passInput.dispatchEvent(new Event('change', { bubbles: true }));
+                                    if (window.AndroidApp) {
+                                        window.AndroidApp.onLoginStatus('PROGRESS', 'Şifre yazıldı...');
+                                    }
+                                }
 
-            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
-                if (request?.isForMainFrame == true) {
-                    val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.description?.toString().orEmpty() else ""
-                    if (desc.isNotBlank() && !desc.contains("SUCCESS", ignoreCase = true)) {
-                        setStatusText("Tarayıcı uyarısı: $desc (Mobil verinin kapalı olduğundan emin olun)", StatusType.INFO)
-                    }
-                    binding.btnConnectNow.isEnabled = true
-                }
+                                var submitBtn = document.querySelector('#btnLogin, button[type="submit"], input[type="submit"], button.btn-success');
+                                if (submitBtn && !submitBtn.disabled) {
+                                    submitBtn.click();
+                                    if (window.AndroidApp) {
+                                        window.AndroidApp.onLoginStatus('PROGRESS', 'Giriş butonuna tıklandı, onay bekleniyor...');
+                                    }
+                                }
+                            }
+                        }, 600);
+                    })();
+                """.trimIndent()
+
+                v.evaluateJavascript(js, null)
             }
         }
 
@@ -276,6 +450,7 @@ class MainActivity : AppCompatActivity() {
                     val obj = array.getJSONObject(i)
                     accounts.add(
                         SavedAccount(
+                            id = obj.optString("id", UUID.randomUUID().toString()),
                             phone = obj.getString("phone"),
                             pass = obj.getString("pass"),
                             isSelected = obj.optBoolean("isSelected", false)
@@ -290,7 +465,7 @@ class MainActivity : AppCompatActivity() {
             val legacyPhone = prefs.getString("phone", "").orEmpty()
             val legacyPass = prefs.getString("password", "").orEmpty()
             if (legacyPhone.isNotBlank() && legacyPass.isNotBlank()) {
-                accounts.add(SavedAccount(legacyPhone, legacyPass, isSelected = true))
+                accounts.add(SavedAccount(phone = legacyPhone, pass = legacyPass, isSelected = true))
                 saveAccountsToPrefs()
             }
         }
@@ -308,6 +483,7 @@ class MainActivity : AppCompatActivity() {
         val array = JSONArray()
         for (acc in accounts) {
             val obj = JSONObject().apply {
+                put("id", acc.id)
                 put("phone", acc.phone)
                 put("pass", acc.pass)
                 put("isSelected", acc.isSelected)
@@ -326,34 +502,37 @@ class MainActivity : AppCompatActivity() {
         }
     }
 
-    private fun saveOrUpdateAccount(phone: String, pass: String) {
-        val existing = accounts.firstOrNull { it.phone == phone }
-        if (existing != null) {
-            accounts.remove(existing)
-        }
-
-        // Deselect others and select this one
+    private fun saveNewAccount(phone: String, pass: String) {
+        // Deselect others and select this new one
         accounts.forEach { it.isSelected = false }
-        accounts.add(0, SavedAccount(phone, pass, isSelected = true))
+        val newAccount = SavedAccount(
+            id = UUID.randomUUID().toString(),
+            phone = phone,
+            pass = pass,
+            isSelected = true
+        )
+        accounts.add(0, newAccount)
 
         saveAccountsToPrefs()
         renderAccountsList()
-        setStatusText("Hesap kaydedildi ve seçildi: $phone", StatusType.INFO)
+        val masked = if (pass.length > 2) "•••" + pass.takeLast(2) else "••••"
+        setStatusText("Yeni kayıt eklendi ve seçildi: $phone ($masked)", StatusType.INFO)
     }
 
     private fun selectAccount(selectedAccount: SavedAccount) {
-        accounts.forEach { it.isSelected = (it.phone == selectedAccount.phone) }
+        accounts.forEach { it.isSelected = (it.id == selectedAccount.id) }
         saveAccountsToPrefs()
         renderAccountsList()
 
         binding.etPhone.setText(selectedAccount.phone)
         binding.etPassword.setText(selectedAccount.pass)
-        setStatusText("Seçili Hesap: ${selectedAccount.phone}. 'Bağlan' butonuna basabilirsiniz.", StatusType.INFO)
+        val masked = if (selectedAccount.pass.length > 2) "•••" + selectedAccount.pass.takeLast(2) else "••••"
+        setStatusText("Seçili Hesap: ${selectedAccount.phone} ($masked). Giriş yapabilirsiniz.", StatusType.INFO)
     }
 
     private fun deleteAccount(account: SavedAccount) {
         val wasSelected = account.isSelected
-        accounts.remove(account)
+        accounts.removeAll { it.id == account.id }
         if (wasSelected && accounts.isNotEmpty()) {
             accounts[0].isSelected = true
         }
@@ -381,7 +560,8 @@ class MainActivity : AppCompatActivity() {
             val ivRadio = itemView.findViewById<ImageView>(R.id.ivSelectRadio)
             val btnDelete = itemView.findViewById<ImageButton>(R.id.btnDeleteAccount)
 
-            tvPhone.text = acc.phone
+            val maskedPass = if (acc.pass.length > 2) "•••" + acc.pass.takeLast(2) else "••••"
+            tvPhone.text = "${acc.phone}  ($maskedPass)"
 
             if (acc.isSelected) {
                 card.strokeColor = ContextCompat.getColor(this, R.color.selected_stroke)
@@ -401,7 +581,7 @@ class MainActivity : AppCompatActivity() {
                 card.setCardBackgroundColor(ContextCompat.getColor(this, R.color.card_bg))
                 ivRadio.setImageResource(android.R.drawable.radiobutton_off_background)
                 ivRadio.setColorFilter(ContextCompat.getColor(this, R.color.text_secondary))
-                tvStatus.text = "Şifre kayıtlı • Seçmek için dokunun"
+                tvStatus.text = "Seçmek için dokunun"
                 tvStatus.setTextColor(ContextCompat.getColor(this, R.color.text_secondary))
             }
 

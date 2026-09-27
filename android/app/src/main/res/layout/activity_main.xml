@@ -200,12 +200,27 @@
                     app:cornerRadius="10dp"
                     android:layout_marginBottom="10dp" />
 
+                <!-- Direct API Fast Connect Button -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnQuickApiConnect"
+                    android:layout_width="match_parent"
+                    android:layout_height="46dp"
+                    android:text="🚀 Hızlı Giriş (Doğrudan API)"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/text_primary"
+                    app:strokeColor="@color/card_stroke"
+                    app:strokeWidth="1dp"
+                    android:backgroundTint="@color/input_bg"
+                    app:cornerRadius="8dp"
+                    android:layout_marginBottom="10dp" />
+
                 <!-- Open in External Browser Button (192.168.1.1) -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnOpenBrowser"
                     android:layout_width="match_parent"
-                    android:layout_height="48dp"
-                    android:text="🌐 Tarayıcıda Aç (192.168.1.1)"
+                    android:layout_height="46dp"
+                    android:text="🌐 Chrome'da Aç (192.168.1.1)"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     android:textColor="@color/primary"
@@ -319,13 +334,29 @@
                     android:paddingEnd="8dp">
 
                     <TextView
-                        android:layout_width="wrap_content"
+                        android:id="@+id/tvWebTitle"
+                        android:layout_width="0dp"
                         android:layout_height="wrap_content"
+                        android:layout_alignParentStart="true"
+                        android:layout_toStartOf="@id/btnReloadWeb"
                         android:layout_centerVertical="true"
+                        android:ellipsize="end"
+                        android:singleLine="true"
                         android:text="🌐 Masaüstü Tarayıcı Görünümü (192.168.1.1)"
                         android:textSize="12sp"
                         android:textStyle="bold"
                         android:textColor="@color/text_primary" />
+
+                    <ImageButton
+                        android:id="@+id/btnReloadWeb"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_toStartOf="@id/btnCloseWebView"
+                        android:layout_centerVertical="true"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:src="@android:drawable/ic_menu_rotate"
+                        app:tint="@color/text_secondary"
+                        android:contentDescription="Yenile" />
 
                     <ImageButton
                         android:id="@+id/btnCloseWebView"
