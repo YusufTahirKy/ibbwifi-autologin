@@ -321,7 +321,7 @@
             android:id="@+id/tvAppVersion"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="ibbWiFi Giriş v1.3.5"
+            android:text="ibbWiFi Giriş v1.3.6"
             android:textAlignment="center"
             android:gravity="center"
             android:textSize="12sp"

@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
             val pInfo = packageManager.getPackageInfo(packageName, 0)
             binding.tvAppVersion.text = "ibbWiFi Giriş v${pInfo.versionName}"
         } catch (e: Exception) {
-            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.5"
+            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.6"
         }
 
         // Load saved accounts
@@ -158,11 +158,7 @@ class MainActivity : AppCompatActivity() {
                 }.onFailure { err ->
                     val errMsg = err.message.orEmpty()
                     setStatusText("Giriş Başarısız: $errMsg", StatusType.ERROR)
-                    if (errMsg.contains("Sabah Karantinası") || errMsg.contains("5-10") || errMsg.contains("429")) {
-                        showMacChangeDialog()
-                    } else {
-                        Toast.makeText(this@MainActivity, "Giriş başarısız: $errMsg", Toast.LENGTH_LONG).show()
-                    }
+                    Toast.makeText(this@MainActivity, "Giriş başarısız: $errMsg", Toast.LENGTH_LONG).show()
                 }
             }
         }
