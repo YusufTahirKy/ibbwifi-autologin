@@ -54,6 +54,19 @@ object IbbLoginEngine {
                 } catch (ignored: Exception) {}
             }
 
+            // For connectivitycheck domains: try Wi-Fi DNS first (works if online)
+            // If DNS is blocked before login, fallback to 1.1.1.1 so router intercepts port 80 instantly
+            if (hostname.contains("connectivitycheck.gstatic.com", ignoreCase = true) ||
+                hostname.contains("clients3.google.com", ignoreCase = true)) {
+                if (wifiNetwork != null) {
+                    try {
+                        val addrs = wifiNetwork.getAllByName(hostname).toList()
+                        if (addrs.isNotEmpty()) return addrs
+                    } catch (ignored: Exception) {}
+                }
+                return listOf(InetAddress.getByAddress(hostname, byteArrayOf(1, 1, 1, 1)))
+            }
+
             // For other domains, try Wi-Fi interface DNS first
             if (wifiNetwork != null) {
                 try {
@@ -140,6 +153,61 @@ object IbbLoginEngine {
         }
     }
 
+    fun detectPortalUrl(context: Context, client: OkHttpClient, wifiNetwork: Network?): String {
+        val gwIp = getGatewayIp(context)
+        val probeUrls = mutableListOf<String>()
+        if (gwIp != "0.0.0.0" && gwIp.isNotBlank()) {
+            probeUrls.add("http://$gwIp/")
+        }
+        probeUrls.add("http://192.168.1.1/")
+        probeUrls.add("http://1.1.1.1/")
+        probeUrls.add(CHECK_URL)
+
+        val probeClient = client.newBuilder()
+            .connectTimeout(1500, TimeUnit.MILLISECONDS)
+            .readTimeout(1500, TimeUnit.MILLISECONDS)
+            .followRedirects(false)
+            .followSslRedirects(false)
+            .build()
+
+        // 1. Probe router port 80: router intercepts in 12ms and returns the Location URL containing mac & session!
+        for (url in probeUrls) {
+            try {
+                val req = Request.Builder()
+                    .url(url)
+                    .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+                    .build()
+                probeClient.newCall(req).execute().use { res ->
+                    val loc = res.header("Location")
+                    if (loc != null) {
+                        val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
+                        if (resolved.contains("ibbwifi", ignoreCase = true) ||
+                            resolved.contains("viracaptive", ignoreCase = true) ||
+                            resolved.contains("mac=", ignoreCase = true)) {
+                            return resolved
+                        }
+                    }
+                }
+            } catch (ignored: Exception) {}
+        }
+
+        // 2. Direct portal check as fallback
+        try {
+            val req = Request.Builder().url(PORTAL_URL).build()
+            probeClient.newCall(req).execute().use { res ->
+                val loc = res.header("Location")
+                if (loc != null) {
+                    val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
+                    if (resolved.contains("ibbwifi", ignoreCase = true) || resolved.contains("viracaptive", ignoreCase = true)) {
+                        return resolved
+                    }
+                }
+            }
+        } catch (ignored: Exception) {}
+
+        return "$PORTAL_URL/"
+    }
+
     suspend fun quickCheckStatus(context: Context, wifiNetwork: Network?): PortalStatus = withContext(Dispatchers.IO) {
         if (wifiNetwork == null) return@withContext PortalStatus.NO_WIFI
 
@@ -149,7 +217,8 @@ object IbbLoginEngine {
 
         try {
             val client = createClient(wifiNetwork)
-            val req = Request.Builder().url(PORTAL_URL).build()
+            val landingUrl = detectPortalUrl(context, client, wifiNetwork)
+            val req = Request.Builder().url(landingUrl).build()
             client.newCall(req).execute().use { res ->
                 val body = res.body?.string().orEmpty()
                 if (body.contains("Oturum Bulunamadı", ignoreCase = true) ||
@@ -192,7 +261,7 @@ object IbbLoginEngine {
             .addInterceptor { chain ->
                 val originalRequest = chain.request().newBuilder()
                     .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-                    .header("Accept", "*/*")
+                    .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
                     .header("Origin", PORTAL_URL)
                     .build()
 
@@ -238,48 +307,21 @@ object IbbLoginEngine {
     }
 
     private fun getCsrfToken(html: String): String? {
-        val matcher = Pattern.compile("name=\"__RequestVerificationToken\"[^>]*value=\"([^\"]+)\"").matcher(html)
-        return if (matcher.find()) matcher.group(1) else null
-    }
-
-    fun detectPortalUrl(client: OkHttpClient): String {
-        // Direct zero-latency check: IBB portal responds in 9ms
-        try {
-            val req = Request.Builder().url(PORTAL_URL).build()
-            client.newCall(req).execute().use { res ->
-                if (res.isSuccessful || res.isRedirect) {
-                    val loc = res.header("Location")
-                    if (loc != null) {
-                        val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
-                        if (resolved.contains("ibbwifi") || resolved.contains("viracaptive")) {
-                            return resolved
-                        }
-                    }
-                    return "$PORTAL_URL/"
-                }
+        val patterns = listOf(
+            "name=[\"']__RequestVerificationToken[\"'][^>]*value=[\"']([^\"']+)[\"']",
+            "value=[\"']([^\"']+)[\"'][^>]*name=[\"']__RequestVerificationToken[\"']",
+            "__RequestVerificationToken[^>]*value=[\"']([^\"']+)[\"']",
+            "data-csrf=[\"']([^\"']+)[\"']",
+            "<meta[^>]*name=[\"'](?:csrf-token|_token)[\"'][^>]*content=[\"']([^\"']+)[\"']"
+        )
+        for (patternStr in patterns) {
+            val matcher = Pattern.compile(patternStr, Pattern.CASE_INSENSITIVE).matcher(html)
+            if (matcher.find()) {
+                val token = matcher.group(1)
+                if (!token.isNullOrBlank()) return token
             }
-        } catch (ignored: Exception) {}
-
-        // Fallback: fast probe (1 sec timeout) if needed
-        val fastClient = client.newBuilder()
-            .connectTimeout(1, TimeUnit.SECONDS)
-            .readTimeout(1, TimeUnit.SECONDS)
-            .build()
-
-        try {
-            val req = Request.Builder().url(CHECK_URL).build()
-            fastClient.newCall(req).execute().use { res ->
-                val loc = res.header("Location")
-                if (loc != null) {
-                    val resolved = try { res.request.url.resolve(loc)?.toString() ?: loc } catch (e: Exception) { loc }
-                    if (resolved.contains("ibbwifi") || resolved.contains("viracaptive") || resolved.contains("mac=")) {
-                        return resolved
-                    }
-                }
-            }
-        } catch (ignored: Exception) {}
-
-        return "$PORTAL_URL/"
+        }
+        return null
     }
 
     private fun kickGatewayAndValidate(
@@ -358,13 +400,22 @@ object IbbLoginEngine {
             return@withContext Result.failure(Exception("Telefon veya şifre boş bırakılamaz."))
         }
 
+        // Ensure DHCP lease is assigned
+        var gwIp = getGatewayIp(context)
+        if (gwIp == "0.0.0.0") {
+            kotlinx.coroutines.delay(1000)
+            gwIp = getGatewayIp(context)
+        }
+
         val client = createClient(wifiNetwork)
 
         onStatus("[2/4] İBB portalına bağlanılıyor...")
-        val landingUrl = detectPortalUrl(client)
+        val landingUrl = detectPortalUrl(context, client, wifiNetwork)
 
         val landingReq = Request.Builder()
             .url(landingUrl)
+            .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
+            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .build()
 
         val landingRes = try {
@@ -389,7 +440,10 @@ object IbbLoginEngine {
                 if (isNetworkOnline(context, wifiNetwork)) {
                     return@withContext Result.success("🎉 İnternet bağlantınız zaten aktif!")
                 }
-                return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. Lütfen Wi-Fi'yi kapatıp tekrar açın."))
+                val title = Regex("<title>([^<]+)</title>", RegexOption.IGNORE_CASE).find(landingHtml)?.groupValues?.get(1)?.trim()
+                val bodySnippet = landingHtml.replace(Regex("<[^>]+>"), " ").replace("\\s+".toRegex(), " ").take(100).trim()
+                val detail = if (!title.isNullOrBlank()) " ($title)" else if (bodySnippet.isNotBlank()) " ($bodySnippet)" else ""
+                return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı$detail. Lütfen Wi-Fi'yi kapatıp açın veya tekrar deneyin."))
             }
 
         onStatus("[3/4] Bilgiler doğrulanıyor...")

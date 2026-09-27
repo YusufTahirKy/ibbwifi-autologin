@@ -11,8 +11,8 @@ android {
         applicationId = "com.yusuftahir.ibbwifi"
         minSdk = 24
         targetSdk = 34
-        versionCode = 19
-        versionName = "1.3.0"
+        versionCode = 20
+        versionName = "1.3.1"
     }
 
     signingConfigs {
