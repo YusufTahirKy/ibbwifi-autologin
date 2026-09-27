@@ -2,6 +2,7 @@ package com.yusuftahir.ibbwifi
 
 import android.content.Context
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Build
 import android.os.Bundle
 import android.widget.Toast
@@ -18,6 +19,13 @@ class MainActivity : AppCompatActivity() {
         super.onCreate(savedInstanceState)
         binding = ActivityMainBinding.inflate(layoutInflater)
         setContentView(binding.root)
+
+        // Request notification permission on Android 13+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            if (checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
+                requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 101)
+            }
+        }
 
         val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
 
@@ -45,12 +53,16 @@ class MainActivity : AppCompatActivity() {
 
             val serviceIntent = Intent(this, IbbBackgroundService::class.java)
             if (isChecked) {
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                    startForegroundService(serviceIntent)
-                } else {
-                    startService(serviceIntent)
+                try {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        startForegroundService(serviceIntent)
+                    } else {
+                        startService(serviceIntent)
+                    }
+                    binding.tvStatus.text = "Durum: Otomatik giriş AÇIK (Bağlantı bekleniyor)"
+                } catch (e: Exception) {
+                    binding.tvStatus.text = "Durum: Servis başlatılamadı (${e.message})"
                 }
-                binding.tvStatus.text = "Durum: Otomatik giriş AÇIK (Bağlantı bekleniyor)"
             } else {
                 stopService(serviceIntent)
                 binding.tvStatus.text = "Durum: Otomatik giriş KAPALI"
@@ -68,14 +80,17 @@ class MainActivity : AppCompatActivity() {
             }
 
             binding.btnConnectNow.isEnabled = false
+            binding.tvStatus.text = "Durum: Başlatılıyor..."
             lifecycleScope.launch {
-                IbbLoginEngine.login(phone, pass) { status ->
+                IbbLoginEngine.login(this@MainActivity, phone, pass) { status ->
                     runOnUiThread {
                         binding.tvStatus.text = "Durum: $status"
                     }
                 }.onSuccess { msg ->
+                    binding.tvStatus.text = "Durum: $msg"
                     Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
                 }.onFailure { err ->
+                    binding.tvStatus.text = "Durum: Hata! ${err.message}"
                     Toast.makeText(this@MainActivity, "Hata: ${err.message}", Toast.LENGTH_LONG).show()
                 }
                 binding.btnConnectNow.isEnabled = true

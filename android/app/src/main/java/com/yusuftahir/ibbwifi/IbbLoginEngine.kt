@@ -1,5 +1,9 @@
 package com.yusuftahir.ibbwifi
 
+import android.content.Context
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.os.Build
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Cookie
@@ -18,35 +22,75 @@ object IbbLoginEngine {
     private const val PORTAL_URL = "https://viracaptive.ibbwifi.istanbul"
     private const val CHECK_URL = "http://connectivitycheck.gstatic.com/generate_204"
 
+    fun bindToWifi(context: Context): Boolean {
+        try {
+            val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                val wifiNetwork = cm.allNetworks.firstOrNull { network ->
+                    val caps = cm.getNetworkCapabilities(network)
+                    caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_WIFI)
+                }
+                if (wifiNetwork != null) {
+                    cm.bindProcessToNetwork(wifiNetwork)
+                    return true
+                }
+            } else {
+                @Suppress("DEPRECATION")
+                val wifiNetwork = cm.allNetworks.firstOrNull { network ->
+                    val info = cm.getNetworkInfo(network)
+                    info != null && info.type == ConnectivityManager.TYPE_WIFI
+                }
+                if (wifiNetwork != null) {
+                    @Suppress("DEPRECATION")
+                    ConnectivityManager.setProcessDefaultNetwork(wifiNetwork)
+                    return true
+                }
+            }
+        } catch (ignored: Exception) {}
+        return false
+    }
+
     private fun createClient(): OkHttpClient {
-        val cookieStore = mutableMapOf<String, MutableList<Cookie>>()
+        val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
         return OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(8, TimeUnit.SECONDS)
+            .connectTimeout(15, TimeUnit.SECONDS)
+            .readTimeout(15, TimeUnit.SECONDS)
             .followRedirects(true)
+            .addInterceptor { chain ->
+                val request = chain.request().newBuilder()
+                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                    .header("Accept", "*/*")
+                    .header("Origin", PORTAL_URL)
+                    .build()
+                chain.proceed(request)
+            }
             .cookieJar(object : CookieJar {
                 override fun saveFromResponse(url: HttpUrl, cookies: List<Cookie>) {
-                    val list = cookieStore.getOrPut(url.host) { mutableListOf() }
-                    list.addAll(cookies)
+                    val map = cookieStore.getOrPut(url.host) { mutableMapOf() }
+                    for (c in cookies) {
+                        map[c.name] = c
+                    }
                 }
 
                 override fun loadForRequest(url: HttpUrl): List<Cookie> {
-                    return cookieStore[url.host] ?: emptyList()
+                    val map = cookieStore[url.host] ?: return emptyList()
+                    return map.values.toList()
                 }
             })
             .build()
     }
 
-    suspend fun isAlreadyConnected(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun isAlreadyConnected(client: OkHttpClient): Boolean = withContext(Dispatchers.IO) {
         try {
-            val client = OkHttpClient.Builder()
-                .connectTimeout(3, TimeUnit.SECONDS)
+            val checkClient = client.newBuilder()
+                .connectTimeout(4, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .build()
             val request = Request.Builder().url(CHECK_URL).build()
-            val response = client.newCall(request).execute()
-            response.code == 204
+            checkClient.newCall(request).execute().use { response ->
+                response.code == 204
+            }
         } catch (e: Exception) {
             false
         }
@@ -66,25 +110,27 @@ object IbbLoginEngine {
         for (url in testUrls) {
             try {
                 val req = Request.Builder().url(url).build()
-                val res = client.newCall(req).execute()
-                val finalUrl = res.request.url.toString()
-                if (finalUrl.contains("ibbwifi") || finalUrl.contains("viracaptive")) {
-                    return finalUrl
+                client.newCall(req).execute().use { res ->
+                    val finalUrl = res.request.url.toString()
+                    if (finalUrl.contains("ibbwifi") || finalUrl.contains("viracaptive")) {
+                        return finalUrl
+                    }
                 }
-            } catch (ignored: Exception) {
-            }
+            } catch (ignored: Exception) {}
         }
         return "$PORTAL_URL/"
     }
 
     suspend fun login(
+        context: Context,
         phone: String,
         pass: String,
         onStatus: (String) -> Unit
     ): Result<String> = withContext(Dispatchers.IO) {
-        if (isAlreadyConnected()) {
-            onStatus("Zaten internete bağlısınız.")
-            return@withContext Result.success("Zaten bağlı.")
+        onStatus("Wi-Fi ağına bağlanılıyor...")
+        val hasWifi = bindToWifi(context)
+        if (!hasWifi) {
+            return@withContext Result.failure(Exception("Telefonunuz bir Wi-Fi ağına bağlı görünmüyor. Lütfen önce ibbWiFi ağına bağlanın."))
         }
 
         if (phone.isBlank() || pass.isBlank()) {
@@ -93,13 +139,17 @@ object IbbLoginEngine {
 
         val client = createClient()
 
+        if (isAlreadyConnected(client)) {
+            onStatus("Zaten internete bağlısınız.")
+            return@withContext Result.success("Zaten internete bağlısınız.")
+        }
+
         onStatus("Portal aranıyor...")
         val landingUrl = detectPortalUrl(client)
 
         onStatus("Açılış sayfası yükleniyor...")
         val landingReq = Request.Builder()
             .url(landingUrl)
-            .header("User-Agent", "Mozilla/5.0 (Linux; Android 10) Mobile")
             .build()
 
         val landingHtml = try {
@@ -109,7 +159,7 @@ object IbbLoginEngine {
         }
 
         val token1 = getCsrfToken(landingHtml)
-            ?: return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı."))
+            ?: return@withContext Result.failure(Exception("İlk güvenlik jetonu (CSRF) alınamadı. (Lütfen portal kapsama alanında olduğunuzdan emin olun)"))
 
         onStatus("Telefon numarası gönderiliyor...")
         val phoneJson = JSONObject().apply {
@@ -132,12 +182,13 @@ object IbbLoginEngine {
         }
 
         if (checkRes.code == 429) {
-            return@withContext Result.failure(Exception("İstek limiti aşıldı (429). Lütfen birkaç dakika bekleyin."))
+            checkRes.close()
+            return@withContext Result.failure(Exception("İstek limiti aşıldı (429). Lütfen 2-3 dakika bekleyip tekrar deneyin."))
         }
 
-        val checkHtml = checkRes.body?.string().orEmpty()
+        val checkHtml = checkRes.use { it.body?.string().orEmpty() }
         val token2 = getCsrfToken(checkHtml)
-            ?: return@withContext Result.failure(Exception("2. güvenlik jetonu alınamadı."))
+            ?: return@withContext Result.failure(Exception("2. güvenlik jetonu alınamadı. Numaranız kayıtlı olmayabilir."))
 
         kotlinx.coroutines.delay(800)
 
@@ -159,18 +210,21 @@ object IbbLoginEngine {
             return@withContext Result.failure(Exception("Giriş isteği hatası: ${e.message}"))
         }
 
-        val loginBody = loginRes.body?.string().orEmpty()
+        val loginBody = loginRes.use { it.body?.string().orEmpty() }
         val json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
 
         val wisprUrl = json.optString("url")
         if (loginRes.isSuccessful && wisprUrl.isNotBlank()) {
             onStatus("Ağ geçidi onaylanıyor...")
-            val wisprReq = Request.Builder().url(wisprUrl).build()
-            client.newCall(wisprReq).execute().close()
+            try {
+                val wisprReq = Request.Builder().url(wisprUrl).build()
+                client.newCall(wisprReq).execute().close()
+            } catch (ignored: Exception) {}
+
             onStatus("Giriş başarılı! İnternet aktif.")
-            return@withContext Result.success("İnternet aktif!")
+            return@withContext Result.success("Giriş başarılı! İnternet aktif.")
         } else {
-            val errMsg = json.optString("message", "Giriş başarısız oldu.")
+            val errMsg = json.optString("message", "Giriş başarısız oldu. Şifrenizi kontrol edin.")
             return@withContext Result.failure(Exception(errMsg))
         }
     }

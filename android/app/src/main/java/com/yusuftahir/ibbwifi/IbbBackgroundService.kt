@@ -43,12 +43,17 @@ class IbbBackgroundService : Service() {
 
         networkCallback = object : ConnectivityManager.NetworkCallback() {
             override fun onAvailable(network: Network) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                    try { cm.bindProcessToNetwork(network) } catch (ignored: Exception) {}
+                }
                 attemptAutoLogin()
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
-                // If captive portal is detected
                 if (capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                        try { cm.bindProcessToNetwork(network) } catch (ignored: Exception) {}
+                    }
                     attemptAutoLogin()
                 }
             }
@@ -67,7 +72,7 @@ class IbbBackgroundService : Service() {
         if (phone.isBlank() || password.isBlank()) return
 
         serviceScope.launch {
-            IbbLoginEngine.login(phone, password) { status ->
+            IbbLoginEngine.login(applicationContext, phone, password) { status ->
                 updateNotification(status)
             }
         }
