@@ -11,13 +11,26 @@ android {
         applicationId = "com.yusuftahir.ibbwifi"
         minSdk = 24
         targetSdk = 34
-        versionCode = 4
-        versionName = "1.1.1"
+        versionCode = 5
+        versionName = "1.1.2"
+    }
+
+    signingConfigs {
+        create("release") {
+            storeFile = file("../release.keystore")
+            storePassword = "ibbwifi123"
+            keyAlias = "ibbkey"
+            keyPassword = "ibbwifi123"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("release")
+        }
         release {
             isMinifyEnabled = false
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
