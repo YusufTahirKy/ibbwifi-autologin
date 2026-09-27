@@ -63,8 +63,8 @@ jobs:
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.2.1
-          name: "📱 IBB Wi-Fi Auto-Login Android APK v1.2.1"
+          tag_name: v1.2.2
+          name: "📱 IBB Wi-Fi Auto-Login Android APK v1.2.2"
           body: |
             ### 📱 Android İçin Otomatik Giriş Uygulaması (.apk)
 
