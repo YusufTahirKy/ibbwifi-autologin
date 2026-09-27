@@ -174,17 +174,45 @@
                 android:orientation="vertical"
                 android:padding="16dp">
 
-                <!-- Prominent Connect Button -->
+                <!-- Mobile Data Warning -->
+                <TextView
+                    android:id="@+id/tvMobileDataWarning"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:text="⚠️ 4.5G Mobil Veriniz açık! 192.168.1.1 ve İBB portalına bağlanabilmek için lütfen mobil veriyi kapatın."
+                    android:textSize="12sp"
+                    android:textColor="#FFA726"
+                    android:background="#2E1F00"
+                    android:padding="8dp"
+                    android:layout_marginBottom="12dp"
+                    android:visibility="gone" />
+
+                <!-- Prominent Connect Button (Masaüstü Modu) -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnConnectNow"
                     android:layout_width="match_parent"
                     android:layout_height="54dp"
-                    android:text="⚡ Bağlan"
-                    android:textSize="16sp"
+                    android:text="⚡ Bağlan (Masaüstü Modu)"
+                    android:textSize="15sp"
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"
                     android:backgroundTint="@color/accent"
                     app:cornerRadius="10dp"
+                    android:layout_marginBottom="10dp" />
+
+                <!-- Open in External Browser Button (192.168.1.1) -->
+                <com.google.android.material.button.MaterialButton
+                    android:id="@+id/btnOpenBrowser"
+                    android:layout_width="match_parent"
+                    android:layout_height="48dp"
+                    android:text="🌐 Tarayıcıda Aç (192.168.1.1)"
+                    android:textSize="13sp"
+                    android:textStyle="bold"
+                    android:textColor="@color/primary"
+                    app:strokeColor="@color/primary"
+                    app:strokeWidth="1dp"
+                    android:backgroundTint="@color/input_bg"
+                    app:cornerRadius="8dp"
                     android:layout_marginBottom="14dp" />
 
                 <!-- Auto Login Toggle -->
@@ -232,7 +260,7 @@
             android:id="@+id/cardStatus"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginBottom="24dp"
+            android:layout_marginBottom="14dp"
             app:cardCornerRadius="12dp"
             app:cardElevation="0dp"
             app:strokeWidth="1dp"
@@ -262,6 +290,70 @@
                     android:textSize="13sp"
                     android:lineSpacingExtra="3dp"
                     android:textColor="@color/text_primary" />
+            </LinearLayout>
+        </com.google.android.material.card.MaterialCardView>
+
+        <!-- Card: Dahili Tarayıcı (WebView Desktop Mode) -->
+        <com.google.android.material.card.MaterialCardView
+            android:id="@+id/cardWebView"
+            android:layout_width="match_parent"
+            android:layout_height="380dp"
+            android:layout_marginBottom="24dp"
+            android:visibility="gone"
+            app:cardCornerRadius="12dp"
+            app:cardElevation="0dp"
+            app:strokeWidth="1dp"
+            app:strokeColor="@color/card_stroke"
+            app:cardBackgroundColor="@color/card_bg">
+
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="match_parent"
+                android:orientation="vertical">
+
+                <RelativeLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="40dp"
+                    android:background="@color/surface"
+                    android:paddingStart="12dp"
+                    android:paddingEnd="8dp">
+
+                    <TextView
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_centerVertical="true"
+                        android:text="🌐 Masaüstü Tarayıcı Görünümü (192.168.1.1)"
+                        android:textSize="12sp"
+                        android:textStyle="bold"
+                        android:textColor="@color/text_primary" />
+
+                    <ImageButton
+                        android:id="@+id/btnCloseWebView"
+                        android:layout_width="36dp"
+                        android:layout_height="36dp"
+                        android:layout_alignParentEnd="true"
+                        android:layout_centerVertical="true"
+                        android:background="?attr/selectableItemBackgroundBorderless"
+                        android:src="@android:drawable/ic_menu_close_clear_cancel"
+                        app:tint="@color/text_secondary" />
+                </RelativeLayout>
+
+                <FrameLayout
+                    android:layout_width="match_parent"
+                    android:layout_height="match_parent">
+
+                    <WebView
+                        android:id="@+id/webViewPortal"
+                        android:layout_width="match_parent"
+                        android:layout_height="match_parent" />
+
+                    <ProgressBar
+                        android:id="@+id/pbWebLoading"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:visibility="gone" />
+                </FrameLayout>
             </LinearLayout>
         </com.google.android.material.card.MaterialCardView>
 

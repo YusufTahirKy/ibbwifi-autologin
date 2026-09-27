@@ -114,7 +114,7 @@ object IbbLoginEngine {
             .dns(CaptiveDns(wifiNetwork))
             .addInterceptor { chain ->
                 val originalRequest = chain.request().newBuilder()
-                    .header("User-Agent", "Mozilla/5.0 (Linux; Android 10; Mobile) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36")
+                    .header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
                     .header("Accept", "*/*")
                     .header("Origin", PORTAL_URL)
                     .build()
@@ -163,15 +163,21 @@ object IbbLoginEngine {
     }
 
     private fun detectPortalUrl(client: OkHttpClient): String {
-        try {
-            val req = Request.Builder().url(CHECK_URL).build()
-            client.newCall(req).execute().use { res ->
-                val loc = res.header("Location")
-                if (loc != null && (loc.contains("ibbwifi") || loc.contains("viracaptive"))) {
-                    return loc
+        val probeUrls = listOf(
+            "http://192.168.1.1",
+            CHECK_URL
+        )
+        for (url in probeUrls) {
+            try {
+                val req = Request.Builder().url(url).build()
+                client.newCall(req).execute().use { res ->
+                    val loc = res.header("Location")
+                    if (loc != null && (loc.contains("ibbwifi") || loc.contains("viracaptive"))) {
+                        return loc
+                    }
                 }
-            }
-        } catch (ignored: Exception) {}
+            } catch (ignored: Exception) {}
+        }
         return "$PORTAL_URL/"
     }
 

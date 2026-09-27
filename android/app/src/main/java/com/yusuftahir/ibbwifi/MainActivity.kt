@@ -11,6 +11,14 @@ import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.Toast
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
+import android.net.Uri
+import android.webkit.CookieManager
+import android.webkit.WebResourceError
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
@@ -91,7 +99,33 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Connect Button (Bağlan)
+        // Close WebView button
+        binding.btnCloseWebView.setOnClickListener {
+            binding.cardWebView.visibility = View.GONE
+        }
+
+        // Open in Browser (192.168.1.1)
+        binding.btnOpenBrowser.setOnClickListener {
+            val selected = accounts.firstOrNull { it.isSelected }
+            val phone = if (binding.etPhone.text.isNotBlank()) binding.etPhone.text.toString().trim() else selected?.phone.orEmpty()
+            val pass = if (binding.etPassword.text.isNotBlank()) binding.etPassword.text.toString().trim() else selected?.pass.orEmpty()
+
+            if (pass.isNotBlank()) {
+                val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                val clip = android.content.ClipData.newPlainText("IBB Pass", pass)
+                clipboard.setPrimaryClip(clip)
+                Toast.makeText(this, "Şifreniz panoya kopyalandı! Tarayıcıda yapıştırabilirsiniz.", Toast.LENGTH_LONG).show()
+            }
+
+            try {
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse("http://192.168.1.1"))
+                startActivity(intent)
+            } catch (e: Exception) {
+                Toast.makeText(this, "Tarayıcı açılamadı: ${e.message}", Toast.LENGTH_SHORT).show()
+            }
+        }
+
+        // Connect Button (Masaüstü Modu)
         binding.btnConnectNow.setOnClickListener {
             val typedPhone = binding.etPhone.text.toString().trim()
             val typedPass = binding.etPassword.text.toString().trim()
@@ -106,30 +140,125 @@ class MainActivity : AppCompatActivity() {
                 return@setOnClickListener
             }
 
-            binding.btnConnectNow.isEnabled = false
-            setStatusText("Bağlantı başlatılıyor...", StatusType.PROGRESS)
+            // Check mobile data
+            checkMobileDataWarning()
 
-            lifecycleScope.launch {
-                try {
-                    IbbLoginEngine.login(this@MainActivity, phone, pass) { status ->
-                        runOnUiThread {
-                            setStatusText(status, StatusType.PROGRESS)
-                        }
-                    }.onSuccess { msg ->
-                        setStatusText(msg, StatusType.SUCCESS)
-                        Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
-                    }.onFailure { err ->
-                        val errorMsg = err.message ?: "Bilinmeyen hata"
-                        setStatusText("Hata! $errorMsg", StatusType.ERROR)
-                        Toast.makeText(this@MainActivity, "Hata: $errorMsg", Toast.LENGTH_LONG).show()
+            // Run desktop webview auto-login
+            startDesktopWebViewLogin(phone, pass)
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        checkMobileDataWarning()
+    }
+
+    private fun checkMobileDataWarning() {
+        try {
+            val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+            val isCellularActive = cm.allNetworks.any { network ->
+                val caps = cm.getNetworkCapabilities(network)
+                caps != null && caps.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR)
+            }
+            binding.tvMobileDataWarning.visibility = if (isCellularActive) View.VISIBLE else View.GONE
+        } catch (ignored: Exception) {}
+    }
+
+    @android.annotation.SuppressLint("SetJavaScriptEnabled")
+    private fun startDesktopWebViewLogin(phone: String, pass: String) {
+        binding.cardWebView.visibility = View.VISIBLE
+        binding.pbWebLoading.visibility = View.VISIBLE
+        binding.btnConnectNow.isEnabled = false
+        setStatusText("Masaüstü modunda portala bağlanılıyor (192.168.1.1)...", StatusType.PROGRESS)
+
+        val webView = binding.webViewPortal
+        val settings = webView.settings
+        settings.javaScriptEnabled = true
+        settings.domStorageEnabled = true
+        settings.databaseEnabled = true
+        // Set standard Desktop Linux Chrome User-Agent
+        settings.userAgentString = "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+        settings.useWideViewPort = true
+        settings.loadWithOverviewMode = true
+
+        val cookieManager = CookieManager.getInstance()
+        cookieManager.setAcceptCookie(true)
+
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageStarted(view: WebView?, url: String?, favicon: android.graphics.Bitmap?) {
+                binding.pbWebLoading.visibility = View.VISIBLE
+                setStatusText("Sayfa açılıyor: ${url?.take(40)}...", StatusType.PROGRESS)
+            }
+
+            override fun onPageFinished(view: WebView?, url: String?) {
+                binding.pbWebLoading.visibility = View.GONE
+                val currentUrl = url.orEmpty()
+
+                if (currentUrl.contains("generate_204") || currentUrl.contains("google.com")) {
+                    setStatusText("🎉 Giriş başarılı! İnternet aktif.", StatusType.SUCCESS)
+                    binding.btnConnectNow.isEnabled = true
+                    Toast.makeText(this@MainActivity, "Giriş başarılı! İnternet aktif.", Toast.LENGTH_SHORT).show()
+                    return
+                }
+
+                // Check for IBB timeout / session error in HTML
+                view?.evaluateJavascript(
+                    "(function() { return document.body ? document.body.innerText : ''; })();"
+                ) { bodyText ->
+                    if (bodyText != null && (bodyText.contains("Oturum Bulunamadı") || bodyText.contains("uzun süre oturum açılmadan"))) {
+                        setStatusText("⚠️ İBB Oturum Zaman Aşımı: Lütfen Wi-Fi'yi kapatıp 2-3 dakika bekledikten sonra yeniden bağlanın.", StatusType.ERROR)
+                        binding.btnConnectNow.isEnabled = true
+                        return@evaluateJavascript
                     }
-                } catch (t: Throwable) {
-                    setStatusText("Hata: ${t.message}", StatusType.ERROR)
-                } finally {
+
+                    // Inject auto-fill script for Phone & Password
+                    val js = """
+                        (function() {
+                            var phone = '$phone';
+                            var pass = '$pass';
+                            
+                            var phoneInput = document.querySelector('input[type="tel"], input[name*="Phone"], input[id*="Phone"], input[name*="phone"]');
+                            if (phoneInput && !phoneInput.value) {
+                                phoneInput.value = phone;
+                                phoneInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                phoneInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            
+                            var passInput = document.querySelector('input[type="password"], input[name*="Password"], input[id*="Password"], input[name*="pass"]');
+                            if (passInput && !passInput.value) {
+                                passInput.value = pass;
+                                passInput.dispatchEvent(new Event('input', { bubbles: true }));
+                                passInput.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+
+                            setTimeout(function() {
+                                var submitBtn = document.querySelector('button[type="submit"], input[type="submit"], .btn-primary, #btnLogin, #btnLandingCheck');
+                                if (submitBtn) {
+                                    submitBtn.click();
+                                }
+                            }, 500);
+                        })();
+                    """.trimIndent()
+
+                    view.evaluateJavascript(js, null)
+                    setStatusText("Bilgiler girildi, giriş doğrulanıyor...", StatusType.PROGRESS)
+                }
+
+                binding.btnConnectNow.isEnabled = true
+            }
+
+            override fun onReceivedError(view: WebView?, request: WebResourceRequest?, error: WebResourceError?) {
+                if (request?.isForMainFrame == true) {
+                    val desc = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) error?.description?.toString().orEmpty() else ""
+                    if (desc.isNotBlank() && !desc.contains("SUCCESS", ignoreCase = true)) {
+                        setStatusText("Tarayıcı uyarısı: $desc (Mobil verinin kapalı olduğundan emin olun)", StatusType.INFO)
+                    }
                     binding.btnConnectNow.isEnabled = true
                 }
             }
         }
+
+        webView.loadUrl("http://192.168.1.1")
     }
 
     private fun loadAccountsFromPrefs() {
