@@ -160,15 +160,6 @@ object IbbLoginEngine {
     }
 
     private fun detectPortalUrl(client: OkHttpClient): String {
-        try {
-            val req = Request.Builder().url(CHECK_URL).build()
-            client.newCall(req).execute().use { res ->
-                val loc = res.header("Location")
-                if (loc != null && (loc.contains("ibbwifi") || loc.contains("viracaptive"))) {
-                    return loc
-                }
-            }
-        } catch (ignored: Exception) {}
         return "$PORTAL_URL/"
     }
 
@@ -202,11 +193,20 @@ object IbbLoginEngine {
             .url(landingUrl)
             .build()
 
-        val landingHtml = try {
-            client.newCall(landingReq).execute().use { it.body?.string().orEmpty() }
+        val landingRes = try {
+            client.newCall(landingReq).execute()
         } catch (e: Exception) {
             return@withContext Result.failure(Exception("Portala bağlanılamadı: ${e.message}"))
         }
+
+        val location = landingRes.header("Location")
+        if (landingRes.code in 300..399 && !location.isNullOrBlank()) {
+            if (!location.contains("ibbwifi.istanbul", ignoreCase = true)) {
+                return@withContext Result.success("🎉 İBB Wi-Fi bağlantınız zaten aktif ve internet açık!")
+            }
+        }
+
+        val landingHtml = landingRes.use { it.body?.string().orEmpty() }
 
         val token1 = getCsrfToken(landingHtml)
             ?: run {
