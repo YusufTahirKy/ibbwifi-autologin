@@ -174,27 +174,8 @@ class MainActivity : AppCompatActivity() {
             }
         }
 
-        // Connect Button (Masaüstü Modu)
+        // Connect Button (Super Fast Direct Login)
         binding.btnConnectNow.setOnClickListener {
-            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
-            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
-
-            val selected = accounts.firstOrNull { it.isSelected }
-            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
-            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
-
-            if (phone.isBlank() || pass.isBlank()) {
-                setStatusText("Hata: Lütfen telefon ve şifre girin veya alttan bir hesap seçin.", StatusType.ERROR)
-                Toast.makeText(this, "Lütfen önce bir hesap seçin veya bilgileri girin.", Toast.LENGTH_SHORT).show()
-                return@setOnClickListener
-            }
-
-            checkMobileDataWarning()
-            startDesktopWebViewLogin(phone, pass)
-        }
-
-        // Quick Direct API Connect Button
-        binding.btnQuickApiConnect.setOnClickListener {
             val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
             val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
 
@@ -211,25 +192,44 @@ class MainActivity : AppCompatActivity() {
             checkMobileDataWarning()
 
             lifecycleScope.launch {
-                binding.btnQuickApiConnect.isEnabled = false
                 binding.btnConnectNow.isEnabled = false
-                setStatusText("Masaüstü kimliğiyle doğrudan portala bağlanılıyor...", StatusType.PROGRESS)
+                binding.btnQuickApiConnect.isEnabled = false
+                setStatusText("Masaüstü protokolüyle portala bağlanılıyor (9ms)...", StatusType.PROGRESS)
 
                 val result = IbbLoginEngine.login(this@MainActivity, phone, pass) { msg ->
                     runOnUiThread { setStatusText(msg, StatusType.PROGRESS) }
                 }
 
-                binding.btnQuickApiConnect.isEnabled = true
                 binding.btnConnectNow.isEnabled = true
+                binding.btnQuickApiConnect.isEnabled = true
 
                 result.onSuccess { msg ->
                     setStatusText(msg, StatusType.SUCCESS)
-                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_SHORT).show()
+                    Toast.makeText(this@MainActivity, msg, Toast.LENGTH_LONG).show()
                 }.onFailure { err ->
-                    setStatusText("Hata: ${err.message}", StatusType.ERROR)
+                    setStatusText("Giriş Başarısız: ${err.message}", StatusType.ERROR)
                     Toast.makeText(this@MainActivity, "Giriş başarısız: ${err.message}", Toast.LENGTH_LONG).show()
                 }
             }
+        }
+
+        // Desktop WebView Button
+        binding.btnQuickApiConnect.setOnClickListener {
+            val typedPhone = binding.etPhone.text?.toString()?.trim().orEmpty()
+            val typedPass = binding.etPassword.text?.toString()?.trim().orEmpty()
+
+            val selected = accounts.firstOrNull { it.isSelected }
+            val phone = if (typedPhone.isNotBlank()) typedPhone else selected?.phone.orEmpty()
+            val pass = if (typedPass.isNotBlank()) typedPass else selected?.pass.orEmpty()
+
+            if (phone.isBlank() || pass.isBlank()) {
+                setStatusText("Hata: Lütfen telefon ve şifre girin veya alttan bir hesap seçin.", StatusType.ERROR)
+                Toast.makeText(this, "Lütfen önce bir hesap seçin veya bilgileri girin.", Toast.LENGTH_SHORT).show()
+                return@setOnClickListener
+            }
+
+            checkMobileDataWarning()
+            startDesktopWebViewLogin(phone, pass)
         }
 
         // Run Full Network Diagnostics

@@ -187,12 +187,12 @@
                     android:layout_marginBottom="12dp"
                     android:visibility="gone" />
 
-                <!-- Prominent Connect Button (Masaüstü Modu) -->
+                <!-- Prominent Connect Button -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnConnectNow"
                     android:layout_width="match_parent"
                     android:layout_height="54dp"
-                    android:text="⚡ Bağlan (Masaüstü Modu)"
+                    android:text="⚡ Tek Tuşla Bağlan (Süper Hızlı)"
                     android:textSize="15sp"
                     android:textStyle="bold"
                     android:textColor="#FFFFFF"
@@ -200,12 +200,12 @@
                     app:cornerRadius="10dp"
                     android:layout_marginBottom="10dp" />
 
-                <!-- Direct API Fast Connect Button -->
+                <!-- Desktop WebView Button -->
                 <com.google.android.material.button.MaterialButton
                     android:id="@+id/btnQuickApiConnect"
                     android:layout_width="match_parent"
                     android:layout_height="46dp"
-                    android:text="🚀 Hızlı Giriş (Doğrudan API)"
+                    android:text="🖥️ Masaüstü Tarayıcısı ile Bağlan"
                     android:textSize="13sp"
                     android:textStyle="bold"
                     android:textColor="@color/text_primary"

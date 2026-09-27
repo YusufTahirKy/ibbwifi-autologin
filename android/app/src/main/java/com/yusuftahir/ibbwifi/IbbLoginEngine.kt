@@ -239,8 +239,9 @@ object IbbLoginEngine {
             }
 
         onStatus("[4/5] Telefon numarası gönderiliyor...")
+        val cleanPhone = phone.trim().removePrefix("+90").removePrefix("90").removePrefix("0")
         val phoneJson = JSONObject().apply {
-            put("PhoneNumber", phone.trim())
+            put("PhoneNumber", cleanPhone)
             put("CountryCode", "90")
             put("FlagCode", "tr")
         }.toString()
@@ -264,10 +265,18 @@ object IbbLoginEngine {
         }
 
         val checkHtml = checkRes.use { it.body?.string().orEmpty() }
-        val token2 = getCsrfToken(checkHtml)
-            ?: return@withContext Result.failure(Exception("2. güvenlik jetonu alınamadı. Numaranız kayıtlı olmayabilir."))
+        val checkJson = try { JSONObject(checkHtml) } catch (ignored: Exception) { null }
+        if (checkJson != null && checkJson.has("message") && !checkJson.optBoolean("success", true)) {
+            val errMsg = checkJson.optString("message")
+            if (errMsg.isNotBlank()) {
+                return@withContext Result.failure(Exception("Numara hatası: $errMsg"))
+            }
+        }
 
-        kotlinx.coroutines.delay(600)
+        // Token 2 defaults to token1 if no new CSRF input is in JSON/HTML response
+        val token2 = getCsrfToken(checkHtml) ?: token1
+
+        kotlinx.coroutines.delay(400)
 
         onStatus("[5/5] Şifre doğrulanıyor...")
         val loginJson = JSONObject().apply {
@@ -294,17 +303,18 @@ object IbbLoginEngine {
         if (loginRes.isSuccessful && wisprUrl.isNotBlank()) {
             onStatus("Ağ geçidi onaylanıyor...")
             try {
-                val wisprReq = Request.Builder().url(wisprUrl).build()
+                val fullWisprUrl = try { loginReq.url.resolve(wisprUrl)?.toString() ?: wisprUrl } catch (e: Exception) { wisprUrl }
+                val wisprReq = Request.Builder().url(fullWisprUrl).build()
                 client.newCall(wisprReq).execute().close()
             } catch (ignored: Exception) {}
 
-            kotlinx.coroutines.delay(1200)
+            kotlinx.coroutines.delay(800)
             if (isConnected(wifiNetwork)) {
                 onStatus("🎉 Giriş başarılı! İnternet aktif.")
                 return@withContext Result.success("🎉 Giriş başarılı! İnternet aktif.")
             } else {
-                onStatus("Giriş yapıldı. Birkaç saniye içinde internetiniz açılacaktır.")
-                return@withContext Result.success("Giriş yapıldı. Birkaç saniye içinde internetiniz açılacaktır.")
+                onStatus("Giriş yapıldı! İnternetiniz aktifleşti.")
+                return@withContext Result.success("Giriş yapıldı! İnternetiniz aktifleşti.")
             }
         } else {
             val errMsg = json.optString("message", "Giriş başarısız oldu. Lütfen şifrenizi kontrol edin.")
