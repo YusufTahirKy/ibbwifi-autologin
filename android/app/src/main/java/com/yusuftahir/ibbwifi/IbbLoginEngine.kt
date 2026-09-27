@@ -552,34 +552,8 @@ object IbbLoginEngine {
 
         var loginBody = loginRes.use { it.body?.string().orEmpty() }
         var json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
-        var wisprUrl = json.optString("url")
-        var isSuccess = loginRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))
-
-        // If login failed due to existing session conflict, try sending a logout to clear stale server state and retry login once
-        if (!isSuccess) {
-            val initialErr = json.optString("message", "")
-            if (initialErr.contains("Oturum açma", ignoreCase = true) ||
-                initialErr.contains("hata meydana", ignoreCase = true) ||
-                initialErr.contains("açma sırasında", ignoreCase = true)) {
-                onStatus("[3/4] Önceki oturum temizleniyor, tekrar deneniyor...")
-                logout(context, wifiNetwork)
-                kotlinx.coroutines.delay(1000)
-
-                try {
-                    val retryReq = Request.Builder()
-                        .url("$PORTAL_URL/Login")
-                        .post(loginJson.toRequestBody("application/json".toMediaType()))
-                        .header("X-CSRF-TOKEN", token2)
-                        .header("Referer", landingUrl)
-                        .build()
-                    val retryRes = client.newCall(retryReq).execute()
-                    loginBody = retryRes.use { it.body?.string().orEmpty() }
-                    json = try { JSONObject(loginBody) } catch (e: Exception) { JSONObject() }
-                    wisprUrl = json.optString("url")
-                    isSuccess = retryRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))
-                } catch (ignored: Exception) {}
-            }
-        }
+        val wisprUrl = json.optString("url")
+        val isSuccess = loginRes.isSuccessful && (wisprUrl.isNotBlank() || json.optBoolean("success", false) || loginBody.contains("true"))
 
         if (isSuccess) {
             onStatus("[4/4] Ağ geçidi ve internet etkinleştiriliyor...")

@@ -59,7 +59,7 @@ class MainActivity : AppCompatActivity() {
             val pInfo = packageManager.getPackageInfo(packageName, 0)
             binding.tvAppVersion.text = "ibbWiFi Giriş v${pInfo.versionName}"
         } catch (e: Exception) {
-            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.6"
+            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.7"
         }
 
         // Load saved accounts
