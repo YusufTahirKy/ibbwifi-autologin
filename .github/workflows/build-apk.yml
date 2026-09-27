@@ -59,12 +59,18 @@ jobs:
           name: ibbwifi-autologin-apk
           path: release-apk/ibbwifi-autologin.apk
 
+      - name: Extract Version
+        id: get_version
+        run: |
+          VERSION=$(grep 'versionName =' android/app/build.gradle.kts | cut -d '"' -f 2)
+          echo "VERSION=v$VERSION" >> $GITHUB_OUTPUT
+
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         if: github.ref == 'refs/heads/main'
         with:
-          tag_name: v1.2.3
-          name: "📱 IBB Wi-Fi Auto-Login Android APK v1.2.3"
+          tag_name: ${{ steps.get_version.outputs.VERSION }}
+          name: "📱 IBB Wi-Fi Auto-Login Android APK ${{ steps.get_version.outputs.VERSION }}"
           body: |
             ### 📱 Android İçin Otomatik Giriş Uygulaması (.apk)
 
