@@ -54,6 +54,14 @@ class MainActivity : AppCompatActivity() {
 
         val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
 
+        // Display app version
+        try {
+            val pInfo = packageManager.getPackageInfo(packageName, 0)
+            binding.tvAppVersion.text = "ibbWiFi Giriş v${pInfo.versionName}"
+        } catch (e: Exception) {
+            binding.tvAppVersion.text = "ibbWiFi Giriş v1.3.3"
+        }
+
         // Load saved accounts
         loadAccountsFromPrefs()
 
@@ -211,9 +219,10 @@ class MainActivity : AppCompatActivity() {
             .setTitle("⚙️ MAC Değiştirme (Kilit Sıfırlama)")
             .setMessage(
                 "İBB Wi-Fi '5-10 dakika bekleyin' uyarısı verdiğinde veya sabah kilitlendiğinde:\n\n" +
-                "1. Açılacak ekranda 'ibbWiFi' yanındaki ⚙️ Çark simgesine dokunun.\n" +
-                "2. 'Gelişmiş' bölümünden 'MAC Adresi Tipi'ni değiştirin (Rastgele MAC ⇄ Telefon MAC).\n\n" +
-                "Bu işlem cihaz kimliğini anında yeniler ve bekleme süresini 1 saniyede sıfırlar!"
+                "1. Eğer şu an bağlıysanız, önce alttaki '🚪 Oturumu Kapat' butonuna basarak eski oturumu sonlandırın.\n" +
+                "2. 'Wi-Fi Ayarlarını Aç'a basıp 'ibbWiFi' yanındaki ⚙️ Çark simgesine dokunun.\n" +
+                "3. 'Gelişmiş' bölümünden 'MAC Adresi Tipi'ni değiştirin (Rastgele MAC ⇄ Telefon MAC).\n\n" +
+                "💡 Not: Oturumu kapatmadan 'Ağı Unut' yaparsanız, eski MAC adresinizin oturumu İBB sisteminde 2-3 dakika boyunca açık kalır."
             )
             .setPositiveButton("Wi-Fi Ayarlarını Aç") { _, _ ->
                 try {
@@ -221,6 +230,15 @@ class MainActivity : AppCompatActivity() {
                     startActivity(intent)
                 } catch (e: Exception) {
                     startActivity(Intent(Settings.ACTION_SETTINGS))
+                }
+            }
+            .setNeutralButton("🚪 Oturumu Kapat") { _, _ ->
+                lifecycleScope.launch {
+                    setStatusText("İBB oturumu kapatılıyor...", StatusType.PROGRESS)
+                    val wifiNetwork = IbbLoginEngine.getWifiNetwork(this@MainActivity)
+                    IbbLoginEngine.logout(this@MainActivity, wifiNetwork)
+                    setStatusText("Oturum kapatma isteği gönderildi. Artık MAC değiştirebilir veya 'Ağı Unut' yapabilirsiniz.", StatusType.INFO)
+                    Toast.makeText(this@MainActivity, "Oturum kapatma sinyali iletildi.", Toast.LENGTH_SHORT).show()
                 }
             }
             .setNegativeButton("Kapat", null)

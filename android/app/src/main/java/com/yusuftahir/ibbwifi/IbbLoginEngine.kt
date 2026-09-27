@@ -127,9 +127,15 @@ object IbbLoginEngine {
         try {
             val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
             val caps = cm.getNetworkCapabilities(wifiNetwork)
-            if (caps != null && caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) &&
-                !caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) {
-                return true
+            if (caps != null) {
+                // If Android OS detected a captive portal on Wi-Fi, it CANNOT be online!
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL)) {
+                    return false
+                }
+                // If validated and NO captive portal, then Wi-Fi is genuinely online
+                if (caps.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)) {
+                    return true
+                }
             }
         } catch (ignored: Exception) {}
         return isConnected(wifiNetwork)
@@ -142,12 +148,18 @@ object IbbLoginEngine {
             "http://cp.cloudflare.com/generate_204"
         )
         return try {
-            val checkClient = OkHttpClient.Builder()
+            val builder = OkHttpClient.Builder()
                 .connectTimeout(2, TimeUnit.SECONDS)
                 .readTimeout(2, TimeUnit.SECONDS)
                 .followRedirects(false)
                 .dns(CaptiveDns(wifiNetwork))
-                .build()
+
+            // CRITICAL: Bind socket factory to wifiNetwork so traffic NEVER leaks to Mobile Data (4G/5G)
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP) {
+                builder.socketFactory(wifiNetwork.socketFactory)
+            }
+
+            val checkClient = builder.build()
             for (url in urls) {
                 try {
                     val req = Request.Builder().url(url).build()
@@ -262,12 +274,19 @@ object IbbLoginEngine {
     fun createClient(wifiNetwork: Network?): OkHttpClient {
         val cookieStore = mutableMapOf<String, MutableMap<String, Cookie>>()
 
-        return OkHttpClient.Builder()
+        val builder = OkHttpClient.Builder()
             .connectTimeout(6, TimeUnit.SECONDS)
             .readTimeout(6, TimeUnit.SECONDS)
             .followRedirects(false)
             .followSslRedirects(false)
             .dns(CaptiveDns(wifiNetwork))
+
+        // CRITICAL: Bind socket factory to wifiNetwork so all requests go over Wi-Fi hardware
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.LOLLIPOP && wifiNetwork != null) {
+            builder.socketFactory(wifiNetwork.socketFactory)
+        }
+
+        return builder
             .addInterceptor { chain ->
                 val req = chain.request()
                 val reqBuilder = req.newBuilder()
@@ -571,7 +590,36 @@ object IbbLoginEngine {
             return@withContext Result.success("🎉 Giriş başarılı! İnternet aktif ve doğrulandı.")
         } else {
             val errMsg = json.optString("message", "Giriş başarısız oldu. Lütfen şifrenizi kontrol edin.")
-            return@withContext Result.failure(Exception(errMsg))
+            val finalErrMsg = if (errMsg.contains("Oturum açma", ignoreCase = true) ||
+                errMsg.contains("hata meydana", ignoreCase = true) ||
+                errMsg.contains("açma sırasında", ignoreCase = true)) {
+                "⚠️ Önceki Oturum Henüz Kapanmadı: Az önce eski MAC adresinizle bağlıyken 'Ağı Unut' yaptığınız için, İBB sistemi o oturumu 2-3 dakika boyunca açık tutar (Çift oturuma izin verilmez). Lütfen 2-3 dakika bekleyin (eski oturum düşecektir) ve tekrar deneyin."
+            } else {
+                errMsg
+            }
+            return@withContext Result.failure(Exception(finalErrMsg))
         }
+    }
+
+    suspend fun logout(context: Context, wifiNetwork: Network?): Boolean = withContext(Dispatchers.IO) {
+        val client = createClient(wifiNetwork)
+        val gwIp = getGatewayIp(context)
+        val logoutUrls = listOf(
+            "$PORTAL_URL/Logout",
+            "$PORTAL_URL/Home/Logout",
+            "$PORTAL_URL/Account/Logout",
+            "http://192.168.1.1/logout.html",
+            "http://$gwIp/logout.html"
+        )
+        var anySuccess = false
+        for (url in logoutUrls) {
+            try {
+                val req = Request.Builder().url(url).build()
+                client.newCall(req).execute().use { res ->
+                    if (res.isSuccessful || res.isRedirect) anySuccess = true
+                }
+            } catch (ignored: Exception) {}
+        }
+        anySuccess
     }
 }

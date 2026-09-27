@@ -48,6 +48,21 @@ class IbbBackgroundService : Service() {
         return START_STICKY
     }
 
+    override fun onTaskRemoved(rootIntent: Intent?) {
+        val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
+        if (prefs.getBoolean("auto_login_enabled", false)) {
+            val restartIntent = Intent(applicationContext, IbbBackgroundService::class.java)
+            try {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                    startForegroundService(restartIntent)
+                } else {
+                    startService(restartIntent)
+                }
+            } catch (ignored: Exception) {}
+        }
+        super.onTaskRemoved(rootIntent)
+    }
+
     private fun registerNetworkListener() {
         val cm = getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val request = NetworkRequest.Builder()
@@ -59,7 +74,7 @@ class IbbBackgroundService : Service() {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                     try { cm.bindProcessToNetwork(network) } catch (ignored: Exception) {}
                 }
-                attemptAutoLogin("Wi-Fi Bağlandı")
+                attemptAutoLogin("Wi-Fi Bağlandı", network)
             }
 
             override fun onCapabilitiesChanged(network: Network, capabilities: NetworkCapabilities) {
@@ -67,7 +82,7 @@ class IbbBackgroundService : Service() {
                     if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
                         try { cm.bindProcessToNetwork(network) } catch (ignored: Exception) {}
                     }
-                    attemptAutoLogin("Captive Portal Algılandı")
+                    attemptAutoLogin("Captive Portal Algılandı", network)
                 }
             }
         }
@@ -99,7 +114,7 @@ class IbbBackgroundService : Service() {
 
                     if (!isOnline) {
                         // Gece oturum düşmüşse derhal yeniden bağlanarak karantinayı önle
-                        attemptAutoLogin("Gece Canlı Tutucu")
+                        attemptAutoLogin("Gece Canlı Tutucu", wifiNetwork)
                     } else if (isNightTime) {
                         // Gece canlılık sinyali gönder
                         IbbLoginEngine.sendKeepAlivePing(wifiNetwork)
@@ -138,7 +153,7 @@ class IbbBackgroundService : Service() {
         return null
     }
 
-    private fun attemptAutoLogin(source: String = "Otomatik") {
+    private fun attemptAutoLogin(source: String = "Otomatik", targetNetwork: Network? = null) {
         val prefs = getSharedPreferences("ibbwifi_prefs", Context.MODE_PRIVATE)
         val isEnabled = prefs.getBoolean("auto_login_enabled", false)
         if (!isEnabled) return
@@ -153,10 +168,12 @@ class IbbBackgroundService : Service() {
 
         serviceScope.launch(Dispatchers.IO) {
             try {
+                updateNotification("İBB Wi-Fi algılandı ($source)...")
+
                 // Settle delay: give DHCP lease and routing 1.8 seconds to establish
                 delay(1800L)
 
-                val wifiNetwork = IbbLoginEngine.getWifiNetwork(applicationContext) ?: run {
+                val wifiNetwork = targetNetwork ?: IbbLoginEngine.getWifiNetwork(applicationContext) ?: run {
                     updateNotification("İBB Wi-Fi dinleniyor...")
                     return@launch
                 }
@@ -206,10 +223,19 @@ class IbbBackgroundService : Service() {
             nm.createNotificationChannel(channel)
         }
 
+        val launchIntent = packageManager.getLaunchIntentForPackage(packageName) ?: Intent(this, MainActivity::class.java)
+        val pendingIntent = android.app.PendingIntent.getActivity(
+            this,
+            0,
+            launchIntent,
+            android.app.PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) android.app.PendingIntent.FLAG_IMMUTABLE else 0)
+        )
+
         return NotificationCompat.Builder(this, channelId)
             .setContentTitle("İBB Wi-Fi Otomatik Giriş")
             .setContentText(text)
             .setSmallIcon(android.R.drawable.stat_notify_sync)
+            .setContentIntent(pendingIntent)
             .setOngoing(true)
             .build()
     }
